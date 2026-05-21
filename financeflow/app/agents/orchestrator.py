@@ -11,6 +11,7 @@ from app.agents.research import ResearchAgent
 from app.agents.analyst import AnalystAgent
 from app.agents.report import ReportAgent
 from app.config.logging import logger
+from app.config.settings import config
 from app.observability.telemetry import get_tracer
 from app.memory.redis import redis_memory
 
@@ -161,6 +162,7 @@ Be autonomous, thorough, and professional in all coordination activities.
         
         super().__init__(
             agent_id="orchestrator-agent",
+            agent_role="orchestrator",
             agent_name="OrchestratorAgent",
             description="Central workflow coordinator for multi-agent platform",
             tools=tools,

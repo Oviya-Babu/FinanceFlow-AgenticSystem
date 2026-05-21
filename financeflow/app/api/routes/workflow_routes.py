@@ -5,10 +5,11 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from typing import Dict, Any, Optional
 import asyncio
 
-from app.config.logging import logger
+from app.config.logging import logger, LogContext
 from app.observability.telemetry import get_tracer
 from app.models.schemas import WorkflowRequest, WorkflowStatus
 from app.agents.orchestrator import OrchestratorAgent
+from app.utils.execution_context import ExecutionContext, set_execution_context
 
 tracer = get_tracer(__name__)
 
@@ -108,14 +109,23 @@ async def _execute_workflow(request: WorkflowRequest) -> None:
         span.set_attribute("workflow_id", request.workflow_id)
         
         try:
+            # Seed a workflow-scoped ExecutionContext so all agents in this
+            # workflow share the same session_id — required by AgentGuard-X
+            # Stage 5 drift detection (behavioral baseline per session).
+            set_execution_context(ExecutionContext(
+                session_id=request.workflow_id,
+                correlation_id=LogContext.get_correlation_id(),
+                trace_id=LogContext.get_trace_id(),
+            ))
+
             # Update status to running
             _active_workflows[request.workflow_id]["status"] = "running"
-            
+
             logger.info(
                 f"Executing workflow: {request.workflow_name}",
                 extra={"workflow_id": request.workflow_id}
             )
-            
+
             # Create and run orchestrator
             orchestrator = OrchestratorAgent()
             await orchestrator.initialize_session()
@@ -125,16 +135,18 @@ async def _execute_workflow(request: WorkflowRequest) -> None:
                 context=request.parameters
             )
             
-            # Update status to completed
-            _active_workflows[request.workflow_id]["status"] = "completed"
+            final_status = result.get("status", "completed")
+            _active_workflows[request.workflow_id]["status"] = final_status
             _active_workflows[request.workflow_id]["result"] = result
-            
+            if final_status == "blocked":
+                _active_workflows[request.workflow_id]["error"] = result.get("error")
+
             logger.info(
-                f"Workflow completed: {request.workflow_name}",
-                extra={"workflow_id": request.workflow_id}
+                f"Workflow finished: {request.workflow_name} — {final_status}",
+                extra={"workflow_id": request.workflow_id, "status": final_status}
             )
-            
-            span.set_attribute("status", "completed")
+
+            span.set_attribute("status", final_status)
             
         except Exception as e:
             logger.error(

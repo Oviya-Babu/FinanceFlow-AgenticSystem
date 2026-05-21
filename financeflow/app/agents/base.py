@@ -10,7 +10,7 @@ from datetime import datetime
 
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain.tools import BaseTool, tool
-from langchain_community.llms import Ollama
+from langchain_ollama import OllamaLLM
 from langchain.prompts import PromptTemplate
 
 from app.config.logging import logger, LogContext
@@ -18,7 +18,8 @@ from app.config.settings import config
 from app.observability.telemetry import get_tracer
 from app.memory.redis import redis_memory
 from app.models.schemas import AgentMessage, ToolResult, SessionContext
-from app.utils.execution_context import ExecutionContext
+from app.utils.execution_context import ExecutionContext, get_execution_context
+from app.security.guard_bridge import AgentGuardCallback, ToolBlockedException, AGENTGUARD_ENABLED
 
 
 tracer = get_tracer(__name__)
@@ -35,6 +36,7 @@ class BaseAgent(ABC):
     def __init__(
         self,
         agent_id: str,
+        agent_role: str,
         agent_name: str,
         description: str,
         tools: List[BaseTool],
@@ -43,20 +45,8 @@ class BaseAgent(ABC):
         max_iterations: Optional[int] = None,
         timeout: Optional[int] = None
     ):
-        """
-        Initialize base agent.
-        
-        Args:
-            agent_id: Unique agent identifier
-            agent_name: Human-readable agent name
-            description: Agent description and purpose
-            tools: List of LangChain tools the agent can use
-            system_prompt: System prompt for agent behavior
-            llm_model: Ollama model to use (default from config)
-            max_iterations: Max reasoning iterations
-            timeout: Execution timeout in seconds
-        """
         self.agent_id = agent_id
+        self.agent_role = agent_role
         self.agent_name = agent_name
         self.description = description
         self.tools = tools
@@ -65,8 +55,9 @@ class BaseAgent(ABC):
         self.max_iterations = max_iterations or config.agent_max_iterations
         self.timeout = timeout or config.agent_timeout
         
-        # LLM instance
-        self.llm = Ollama(
+        # LLM instance — OllamaLLM is the langchain-ollama 0.2.x replacement
+        # for the deprecated langchain_community.llms.Ollama
+        self.llm = OllamaLLM(
             model=self.llm_model,
             base_url=config.ollama.host,
             temperature=config.ollama.temperature,
@@ -88,20 +79,18 @@ class BaseAgent(ABC):
         )
     
     async def initialize_session(self) -> SessionContext:
-        """
-        Initialize a new session context for this agent.
-        
-        Returns:
-            Session context
-        """
+        """Initialize session, reusing the workflow-level session_id when present."""
         with tracer.start_as_current_span("agent_initialize_session") as span:
             span.set_attribute("agent_id", self.agent_id)
-            
+
+            # Reuse the workflow session_id so all agents in one workflow
+            # share a single session — required for AgentGuard-X drift detection.
+            ctx = get_execution_context()
             self.current_session = SessionContext(
-                session_id=str(uuid.uuid4()),
+                session_id=ctx.session_id,
                 agent_id=self.agent_id,
-                correlation_id=LogContext.get_correlation_id(),
-                trace_id=LogContext.get_trace_id(),
+                correlation_id=ctx.correlation_id or LogContext.get_correlation_id(),
+                trace_id=ctx.trace_id or LogContext.get_trace_id(),
             )
             
             # Store session in Redis
@@ -204,6 +193,20 @@ class BaseAgent(ABC):
                     "agent_id": self.agent_id
                 }
                 
+            except ToolBlockedException as e:
+                logger.warning(
+                    "Tool blocked by AgentGuard-X: %s",
+                    e,
+                    extra={"agent_id": self.agent_id, "task": task_description[:50]},
+                )
+                span.set_attribute("status", "blocked")
+                span.set_attribute("block_reason", str(e))
+                return {
+                    "status": "blocked",
+                    "error": str(e),
+                    "agent_id": self.agent_id,
+                }
+
             except asyncio.TimeoutError:
                 logger.error(
                     "Task execution timeout",
@@ -235,34 +238,35 @@ class BaseAgent(ABC):
                 }
     
     def _create_agent_executor(self) -> AgentExecutor:
-        """
-        Create LangChain agent executor with tools.
-        
-        Returns:
-            Configured AgentExecutor
-        """
-        # Build prompt with tools
+        """Create LangChain agent executor with tools and AgentGuard-X callback."""
         tools_description = "\n".join(
             [f"- {tool.name}: {tool.description}" for tool in self.tools]
         )
-        
+
         prompt = PromptTemplate.from_template(
             self.system_prompt + "\n\n"
             "Available tools:\n" + tools_description
         )
-        
-        # Create ReAct agent
+
         agent = create_react_agent(self.llm, self.tools, prompt)
-        
-        # Create executor
+
+        callbacks = []
+        if AGENTGUARD_ENABLED and self.current_session is not None:
+            callbacks.append(AgentGuardCallback(
+                agent_id=self.agent_id,
+                agent_role=self.agent_role,
+                session_id=self.current_session.session_id,
+            ))
+
         executor = AgentExecutor.from_agent_and_tools(
             agent=agent,
             tools=self.tools,
             verbose=config.fastapi.debug,
             max_iterations=self.max_iterations,
             handle_parsing_errors=True,
+            callbacks=callbacks or None,
         )
-        
+
         return executor
     
     async def send_message(
