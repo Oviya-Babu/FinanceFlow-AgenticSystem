@@ -1,0 +1,41 @@
+"""
+Entry point for running FinanceFlow as a module.
+"""
+import asyncio
+import sys
+from app.main import app
+from app.config.settings import config
+from app.config.logging import logger
+
+
+async def main():
+    """Run the platform."""
+    import uvicorn
+    
+    logger.info(
+        f"Starting {config.app_name} v{config.app_version}",
+        extra={
+            "environment": config.fastapi.env,
+            "host": config.fastapi.host,
+            "port": config.fastapi.port
+        }
+    )
+    
+    config_dict = {
+        "app": app,
+        "host": config.fastapi.host,
+        "port": config.fastapi.port,
+        "reload": config.fastapi.reload,
+        "log_level": config.logging.level.lower(),
+    }
+    
+    server = uvicorn.Server(uvicorn.Config(**config_dict))
+    await server.serve()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Platform shutting down...")
+        sys.exit(0)

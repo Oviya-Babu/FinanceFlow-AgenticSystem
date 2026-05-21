@@ -1,0 +1,196 @@
+version: '3.8'
+
+services:
+  # FinanceFlow API Server (Architecturally vulnerable for agent testing)
+  financeflow:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: financeflow-api
+    user: "1000:1000"  # Non-root user
+    ports:
+      - "127.0.0.1:8000:8000"  # Localhost only
+    environment:
+      FASTAPI_ENV: production
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-financeflow-secure-password-change-in-production}
+      SQLITE_DB_PATH: /data/financeflow.db
+      OLLAMA_HOST: http://ollama:11434
+      SIMULATION_MODE: "true"  # Safe tool execution
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    volumes:
+      - ./data:/data:rw
+    networks:
+      - financeflow
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only_root_filesystem: false  # App needs to write logs
+    resources:
+      limits:
+        cpus: '2'
+        memory: 2G
+      reservations:
+        cpus: '1'
+        memory: 1G
+
+  # Redis for memory and sessions (HARDENED - Internal Only, No Public Access)
+  redis:
+    image: redis:7.2-alpine  # Pinned version
+    container_name: financeflow-redis
+    user: "999:999"  # Non-root redis user
+    # CRITICAL: NO port mapping - internal container networking only
+    volumes:
+      - ../redis.conf:/etc/redis/redis.conf:ro
+      - redis_data:/data:rw
+    command:
+      - redis-server
+      - /etc/redis/redis.conf
+      - --loglevel
+      - notice
+      - --logfile
+      - "/data/redis.log"
+    networks:
+      - financeflow
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only_root_filesystem: true
+    tmpfs:
+      - /data
+    resources:
+      limits:
+        cpus: '1'
+        memory: 512M
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-financeflow-secure-password-change-in-production}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Ollama for LLM inference (Internal network + Localhost proxy)
+  ollama:
+    image: ollama/ollama:0.1.32  # Pinned version
+    container_name: financeflow-ollama
+    ports:
+      - "127.0.0.1:11434:11434"  # Localhost only
+    volumes:
+      - ollama_data:/root/.ollama:rw
+    networks:
+      - financeflow
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    resources:
+      limits:
+        cpus: '4'
+        memory: 4G
+    # Model pulling done manually via: docker exec financeflow-ollama ollama pull llama3.2:3b
+
+  # Prometheus for metrics (Internal + Grafana proxy only)
+  prometheus:
+    image: prom/prometheus:v2.50.0  # Pinned version
+    container_name: financeflow-prometheus
+    user: "65534:65534"  # nobody user
+    ports:
+      - "127.0.0.1:9090:9090"  # Localhost only
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus:rw
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.listen-address=:9090'
+    networks:
+      - financeflow
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only_root_filesystem: true
+    tmpfs:
+      - /prometheus
+    resources:
+      limits:
+        cpus: '1'
+        memory: 512M
+
+  # Jaeger for distributed tracing (Localhost only for UI)
+  jaeger:
+    image: jaegertracing/all-in-one:1.50  # Pinned version
+    container_name: financeflow-jaeger
+    user: "1000:1000"  # Non-root user
+    ports:
+      - "127.0.0.1:6831:6831/udp"  # Localhost only
+      - "127.0.0.1:16686:16686"    # Localhost only
+    networks:
+      - financeflow
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    resources:
+      limits:
+        cpus: '1'
+        memory: 512M
+
+  # Grafana for visualization (Localhost only)
+  grafana:
+    image: grafana/grafana:10.3.0  # Pinned version
+    container_name: financeflow-grafana
+    user: "472:472"  # grafana user
+    ports:
+      - "127.0.0.1:3000:3000"  # Localhost only
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_SECURITY_DISABLE_BRUTE_FORCE_LOGIN_PROTECTION: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_DEFAULT_ROLE: "Viewer"
+    volumes:
+      - grafana_data:/var/lib/grafana:rw
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - financeflow
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only_root_filesystem: false
+    resources:
+      limits:
+        cpus: '1'
+        memory: 512M
+
+volumes:
+  redis_data:
+  ollama_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  financeflow:
+    driver: bridge
