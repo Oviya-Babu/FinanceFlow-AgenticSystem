@@ -12,27 +12,20 @@ _execution_context: ContextVar[Optional['ExecutionContext']] = ContextVar('execu
 
 class ExecutionContext:
     """Context for tracking execution across async operations."""
-    
+
     def __init__(
         self,
         correlation_id: Optional[str] = None,
         trace_id: Optional[str] = None,
         session_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        agent_role: Optional[str] = None,
     ):
-        """
-        Initialize execution context.
-        
-        Args:
-            correlation_id: Request correlation ID
-            trace_id: Distributed trace ID
-            session_id: Session identifier
-            agent_id: Agent identifier
-        """
         self.correlation_id = correlation_id or str(uuid.uuid4())
         self.trace_id = trace_id or str(uuid.uuid4())
         self.session_id = session_id or str(uuid.uuid4())
         self.agent_id = agent_id
+        self.agent_role = agent_role
         self.metadata: Dict[str, Any] = {}
     
     def set_metadata(self, key: str, value: Any) -> None:

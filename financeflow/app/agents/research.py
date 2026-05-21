@@ -123,11 +123,12 @@ Prioritize recent, credible financial news and analysis.
         
         super().__init__(
             agent_id="research-agent",
+            agent_role="research_agent",
             agent_name="ResearchAgent",
             description="Autonomous financial research and market intelligence",
             tools=tools,
             system_prompt=self.SYSTEM_PROMPT,
-            llm_model=None,  # Use default from config
+            llm_model=None,
         )
     
     def get_tools(self) -> List[BaseTool]:

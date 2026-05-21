@@ -7,6 +7,7 @@ from langchain.tools import tool
 
 from app.agents.base import BaseAgent
 from app.config.logging import logger
+from app.config.settings import config
 from app.observability.telemetry import get_tracer
 
 tracer = get_tracer(__name__)
@@ -155,6 +156,7 @@ NOTE: Email delivery is a controlled operation that requires special oversight.
         
         super().__init__(
             agent_id="report-agent",
+            agent_role="report_agent",
             agent_name="ReportAgent",
             description="Autonomous report generation and delivery",
             tools=tools,

@@ -125,6 +125,7 @@ Always justify assumptions and provide sensitivity analysis.
         
         super().__init__(
             agent_id="analyst-agent",
+            agent_role="analyst_agent",
             agent_name="AnalystAgent",
             description="Autonomous financial analysis and modeling",
             tools=tools,
