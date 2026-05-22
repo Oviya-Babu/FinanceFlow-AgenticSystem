@@ -129,6 +129,7 @@ class AppConfig(BaseSettings):
     max_agent_instances: int = 10  # Maximum concurrent agents
     
     class Config:
+        extra = "ignore"
         env_prefix = "APP_"
         env_file = ".env"
         case_sensitive = False
