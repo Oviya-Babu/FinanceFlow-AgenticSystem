@@ -13,7 +13,7 @@ async def main():
     import uvicorn
     
     logger.info(
-        f"Starting {config.app_name} v{config.app_version}",
+        f"Starting {config.name} v{config.version}",
         extra={
             "environment": config.fastapi.env,
             "host": config.fastapi.host,
