@@ -6,11 +6,11 @@ pydantic>=2.9.2
 pydantic-settings>=2.5.2
 
 # LLM & Agent Framework
-# 0.3.x required for Python 3.13 and compatible with AgentGuard-X
-langchain>=0.3.0
-langchain-community>=0.3.0
-langchain-core>=0.3.0
-langchain-ollama>=0.2.0
+# Pinned to 0.3.x — AgentExecutor/create_react_agent removed in 0.4+
+langchain>=0.3.0,<0.4.0
+langchain-community>=0.3.0,<0.4.0
+langchain-core>=0.3.0,<0.4.0
+langchain-ollama>=0.2.0,<0.3.0
 ollama>=0.3.3
 
 # Async & Networking

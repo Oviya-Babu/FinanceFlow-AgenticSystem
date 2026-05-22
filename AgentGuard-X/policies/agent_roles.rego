@@ -18,23 +18,23 @@ default allow = false
 default reason = "default deny"
 default violation_type = "unknown"
 
-allow {
+allow if {
     input.tool_name in allowed_tools[input.agent_role]
     input.request_count_last_minute < rate_limits[input.agent_role]
 }
 
-reason = "Tool not permitted for this agent role" {
+reason = "Tool not permitted for this agent role" if {
     not input.tool_name in allowed_tools[input.agent_role]
 }
 
-violation_type = "tool_not_permitted" {
+violation_type = "tool_not_permitted" if {
     not input.tool_name in allowed_tools[input.agent_role]
 }
 
-reason = "Rate limit exceeded" {
+reason = "Rate limit exceeded" if {
     input.request_count_last_minute >= rate_limits[input.agent_role]
 }
 
-violation_type = "rate_limit_exceeded" {
+violation_type = "rate_limit_exceeded" if {
     input.request_count_last_minute >= rate_limits[input.agent_role]
 }

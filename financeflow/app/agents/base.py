@@ -8,10 +8,10 @@ from abc import ABC, abstractmethod
 import uuid
 from datetime import datetime
 
-from langchain.agents import create_react_agent
 try:
-    from langchain.agents import AgentExecutor
+    from langchain.agents import create_react_agent, AgentExecutor
 except ImportError:
+    from langchain.agents.react.agent import create_react_agent
     from langchain.agents.agent import AgentExecutor
 from langchain_core.tools import BaseTool, tool
 from langchain_ollama import OllamaLLM
