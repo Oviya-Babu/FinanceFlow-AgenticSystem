@@ -1,4 +1,4 @@
-package agentguard.authz
+package agentguard.roles
 
 # Tool allowlists per role
 allowed_tools := {
