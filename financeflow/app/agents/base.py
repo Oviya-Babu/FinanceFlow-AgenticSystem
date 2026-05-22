@@ -8,10 +8,14 @@ from abc import ABC, abstractmethod
 import uuid
 from datetime import datetime
 
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain.tools import BaseTool, tool
+from langchain.agents import create_react_agent
+try:
+    from langchain.agents import AgentExecutor
+except ImportError:
+    from langchain.agents.agent import AgentExecutor
+from langchain_core.tools import BaseTool, tool
 from langchain_ollama import OllamaLLM
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 
 from app.config.logging import logger, LogContext
 from app.config.settings import config

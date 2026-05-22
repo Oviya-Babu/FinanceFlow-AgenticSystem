@@ -3,7 +3,7 @@ Orchestrator Agent for workflow coordination and task decomposition.
 Central coordination point for multi-agent workflows.
 """
 from typing import List, Dict, Any, Optional
-from langchain.tools import tool
+from langchain_core.tools import tool
 import uuid
 
 from app.agents.base import BaseAgent

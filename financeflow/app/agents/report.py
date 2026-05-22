@@ -3,7 +3,7 @@ Report Agent for report formatting, synthesis, and delivery.
 Autonomous report generation and distribution.
 """
 from typing import List
-from langchain.tools import tool
+from langchain_core.tools import tool
 
 from app.agents.base import BaseAgent
 from app.config.logging import logger
