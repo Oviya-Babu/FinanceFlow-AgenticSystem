@@ -243,14 +243,24 @@ class BaseAgent(ABC):
     
     def _create_agent_executor(self) -> AgentExecutor:
         """Create LangChain agent executor with tools and AgentGuard-X callback."""
-        tools_description = "\n".join(
-            [f"- {tool.name}: {tool.description}" for tool in self.tools]
+        react_template = (
+            self.system_prompt.strip() + "\n\n"
+            "Tools available:\n{tools}\n\n"
+            "Use this format:\n"
+            "Question: the input you must answer\n"
+            "Thought: think about what to do\n"
+            "Action: one of [{tool_names}]\n"
+            "Action Input: the input to the action\n"
+            "Observation: the result\n"
+            "... (repeat Thought/Action/Action Input/Observation as needed)\n"
+            "Thought: I now know the final answer\n"
+            "Final Answer: the final answer\n\n"
+            "Begin!\n\n"
+            "Question: {input}\n"
+            "Thought:{agent_scratchpad}"
         )
 
-        prompt = PromptTemplate.from_template(
-            self.system_prompt + "\n\n"
-            "Available tools:\n" + tools_description
-        )
+        prompt = PromptTemplate.from_template(react_template)
 
         agent = create_react_agent(self.llm, self.tools, prompt)
 
