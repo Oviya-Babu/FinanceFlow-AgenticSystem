@@ -26,4 +26,6 @@ _stop "FinanceFlow"  "financeflow"
 _stop "AgentGuard-X" "agentguardx"
 _stop "OPA"          "opa"
 _stop "Ollama"       "ollama"
+# Kill any stray OPA process not tracked by PID file (e.g. manually started)
+pkill -f "opa run" 2>/dev/null && echo "  [✓] Stray OPA process killed" || true
 echo "Done."

@@ -53,7 +53,18 @@ else
         "$REPO_ROOT/AgentGuard-X/policies/" \
         > "$LOG_DIR/opa.log" 2>&1 &
     echo $! > "$LOG_DIR/opa.pid"
-    sleep 2
+    # Wait up to 15 seconds for OPA to become healthy
+    for i in {1..15}; do
+        sleep 1
+        if curl -s http://localhost:8181/health > /dev/null 2>&1; then
+            echo "[✓] OPA ready"
+            break
+        fi
+        if [ "$i" -eq 15 ]; then
+            echo "[✗] OPA failed to start — check $LOG_DIR/opa.log"
+            tail -5 "$LOG_DIR/opa.log"
+        fi
+    done
 fi
 
 # ── AgentGuard-X (:8001) ──────────────────────────────────────────────────────
