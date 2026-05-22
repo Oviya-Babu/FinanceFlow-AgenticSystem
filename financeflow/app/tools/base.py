@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, List
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from langchain.tools import BaseTool
+from langchain_core.tools import BaseTool
 from app.config.logging import logger
 from app.observability.telemetry import get_tracer
 

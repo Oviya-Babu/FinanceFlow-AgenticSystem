@@ -3,7 +3,7 @@ Research Agent for web research, news analysis, and competitor intelligence.
 Autonomous research capability with dynamic tool selection.
 """
 from typing import List, Optional, Dict, Any
-from langchain.tools import BaseTool, tool
+from langchain_core.tools import BaseTool, tool
 import httpx
 
 from app.agents.base import BaseAgent

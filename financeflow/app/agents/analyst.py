@@ -3,7 +3,7 @@ Analyst Agent for internal financial analysis, modeling, and insight generation.
 Autonomous analytical capability with database access.
 """
 from typing import List
-from langchain.tools import tool
+from langchain_core.tools import tool
 
 from app.agents.base import BaseAgent
 from app.config.logging import logger
