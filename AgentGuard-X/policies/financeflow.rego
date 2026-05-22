@@ -47,11 +47,11 @@ _rate_limit_per_minute := 60
 # Derived facts
 # ---------------------------------------------------------------------------
 
-_tool_permitted {
+_tool_permitted if {
     _allowed_tools[input.agent_role][input.tool_name]
 }
 
-_rate_exceeded {
+_rate_exceeded if {
     input.request_count_last_minute > _rate_limit_per_minute
 }
 
@@ -61,7 +61,7 @@ _rate_exceeded {
 
 default allow := false
 
-allow {
+allow if {
     _tool_permitted
     not _rate_exceeded
 }
@@ -72,11 +72,11 @@ allow {
 
 default violation_type := ""
 
-violation_type := "tool_not_permitted" {
+violation_type := "tool_not_permitted" if {
     not _tool_permitted
 }
 
-violation_type := "rate_limit_exceeded" {
+violation_type := "rate_limit_exceeded" if {
     _tool_permitted
     _rate_exceeded
 }
@@ -87,18 +87,18 @@ violation_type := "rate_limit_exceeded" {
 
 default reason := ""
 
-reason := "tool is permitted for this role" {
+reason := "tool is permitted for this role" if {
     allow
 }
 
 reason := concat("", [
     "tool '", input.tool_name,
     "' is not in the allow-list for role '", input.agent_role, "'",
-]) {
+]) if {
     not _tool_permitted
 }
 
-reason := "request rate limit exceeded for this agent" {
+reason := "request rate limit exceeded for this agent" if {
     _tool_permitted
     _rate_exceeded
 }
