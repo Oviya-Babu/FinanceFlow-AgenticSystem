@@ -140,7 +140,7 @@ class SecureRedisMemory:
                 await self.redis.setex(
                     f"session:{session_id}",
                     ttl,
-                    json.dumps(data)
+                    json.dumps(data, default=str)
                 )
             except RedisError as e:
                 logger.error(f"Failed to set session: {e}")
@@ -189,7 +189,7 @@ class SecureRedisMemory:
                 await self.redis.setex(
                     f"agent:context:{agent_id}",
                     ttl,
-                    json.dumps(context)
+                    json.dumps(context, default=str)
                 )
             except RedisError as e:
                 logger.error(f"Failed to set agent context: {e}")
@@ -258,7 +258,7 @@ class SecureRedisMemory:
                 await self.redis.setex(
                     f"tool_cache:{tool_key}",
                     ttl,
-                    json.dumps(result) if not isinstance(result, str) else result
+                    json.dumps(result, default=str) if not isinstance(result, str) else result
                 )
             except RedisError as e:
                 logger.error(f"Failed to cache tool result: {e}")
