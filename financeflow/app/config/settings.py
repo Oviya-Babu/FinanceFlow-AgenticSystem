@@ -134,6 +134,10 @@ class AppConfig(BaseSettings):
         env_file = ".env"
         case_sensitive = False
 
+    @property
+    def app_name(self) -> str:
+        return self.name
+
 
 # Global config instance
 config = AppConfig()

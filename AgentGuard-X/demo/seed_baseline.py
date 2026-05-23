@@ -1,109 +1,146 @@
 """
-Pre-seeds Redis with synthetic baseline profiles and a demo session history.
-Run this once before demo/run_flows.py.
+Seed behavioral baselines for all 4 FinanceFlow agents into Redis.
+Run once before any demo to give Stage 5 drift detection a reference point.
+
+Usage: python demo/seed_baseline.py
 """
-import sys
+import json
 import os
+import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 from session import redis_store
 
+# 15 synthetic clean events per agent, one per minute back in time
+_BASELINES = {
+    "research_agent": [
+        {"tool_name": "web_search",  "tool_input_raw": q, "score": 0.04, "verdict": "FAST_PATH"}
+        for q in [
+            "NVDA quarterly earnings Q3 2024",
+            "TSLA market cap analysis",
+            "SPY index performance Q3",
+            "financial sector overview Q3 2024",
+            "semiconductor market trends 2024",
+            "NVDA revenue guidance fiscal 2025",
+            "TSLA delivery numbers October 2024",
+            "SPY sector rotation analysis",
+            "NVDA datacentre demand forecast",
+            "financial market weekly summary",
+        ]
+    ] + [
+        {"tool_name": "read_file", "tool_input_raw": f, "score": 0.03, "verdict": "FAST_PATH"}
+        for f in ["report.txt", "summary.txt", "data.csv", "notes.txt", "report.txt"]
+    ],
 
-def _make_event(tool_name: str, tool_input_raw: str, seconds_ago: float) -> dict:
-    return {
-        "tool_name": tool_name,
-        "tool_input_raw": tool_input_raw,
-        "timestamp": time.time() - seconds_ago,
-        "score": 0.05,
-    }
+    "analyst_agent": [
+        {"tool_name": "query_internal_db", "tool_input_raw": q, "score": 0.03, "verdict": "FAST_PATH"}
+        for q in [
+            "SELECT revenue FROM financials WHERE ticker='NVDA'",
+            "SELECT market_cap FROM stocks WHERE ticker='TSLA'",
+            "SELECT * FROM portfolios LIMIT 10",
+            "SELECT growth_rate FROM financials WHERE sector='tech'",
+            "SELECT eps FROM financials WHERE ticker='NVDA' ORDER BY date DESC",
+            "SELECT price, volume FROM stocks WHERE ticker='SPY'",
+            "SELECT dividend FROM stocks WHERE yield > 0.03",
+            "SELECT revenue, growth FROM financials WHERE quarter='Q3'",
+            "SELECT beta FROM stocks WHERE market_cap > 1e12",
+            "SELECT pe_ratio FROM stocks ORDER BY pe_ratio ASC LIMIT 20",
+        ]
+    ] + [
+        {"tool_name": "write_report", "tool_input_raw": c, "score": 0.03, "verdict": "FAST_PATH"}
+        for c in [
+            "NVDA Q3 analysis: strong beat on revenue and EPS",
+            "Portfolio rebalancing recommendation for Q4",
+            "Sector rotation analysis: tech overweight maintained",
+            "Risk assessment: low market volatility expected",
+            "Monthly performance summary for investment committee",
+        ]
+    ],
+
+    "report_agent": [
+        {"tool_name": "write_report", "tool_input_raw": c, "score": 0.03, "verdict": "FAST_PATH"}
+        for c in [
+            "Q3 investment committee summary report",
+            "NVDA position update — maintain overweight",
+            "Quarterly risk assessment — all clear",
+            "Monthly client newsletter draft",
+            "Annual portfolio performance report",
+            "Market outlook for Q4 2024",
+            "ESG compliance report — no issues",
+            "Trade execution summary October 2024",
+        ]
+    ] + [
+        {"tool_name": "send_email", "tool_input_raw": e, "score": 0.03, "verdict": "FAST_PATH"}
+        for e in [
+            "investment-team@financeflow.com|Q3 Report|See attached",
+            "investment-team@financeflow.com|Monthly Update|Markets stable",
+            "investment-team@financeflow.com|Risk Alert|Low severity",
+            "investment-team@financeflow.com|Earnings Summary|NVDA beat",
+            "investment-team@financeflow.com|Portfolio Review|Q3 performance",
+            "investment-team@financeflow.com|Compliance|Monthly clear",
+            "investment-team@financeflow.com|Market Update|SPY +5.5% Q3",
+        ]
+    ],
+
+    "orchestrator_agent": [
+        {"tool_name": "spawn_agent", "tool_input_raw": t, "score": 0.04, "verdict": "FAST_PATH"}
+        for t in [
+            "research_agent|Analyse NVDA Q3 results",
+            "analyst_agent|Query internal DB for Q3 metrics",
+            "report_agent|Write quarterly investment summary",
+            "research_agent|Search for semiconductor sector news",
+            "analyst_agent|Generate risk assessment report",
+            "report_agent|Send monthly newsletter",
+            "research_agent|Fetch SPY performance data",
+            "analyst_agent|Analyse portfolio allocation",
+            "report_agent|Prepare board presentation",
+            "research_agent|TSLA earnings analysis",
+            "analyst_agent|DB query: top 10 holdings",
+            "report_agent|ESG compliance draft",
+            "research_agent|Macro economic overview Q4",
+            "analyst_agent|Sector weighting review",
+            "report_agent|Client update Q3",
+        ]
+    ],
+}
+
+_SESSIONS = {
+    "ff-session-research":     "research_agent",
+    "ff-session-analyst":      "analyst_agent",
+    "ff-session-report":       "report_agent",
+    "ff-session-orchestrator": "orchestrator_agent",
+}
 
 
-def seed_research_agent_baseline():
-    events = [
-        _make_event("web_search", "latest AI research papers 2024", 600),
-        _make_event("web_search", "transformer architecture advances", 570),
-        _make_event("read_file", "report.txt", 540),
-        _make_event("web_search", "neural network training best practices", 510),
-        _make_event("read_file", "report.txt", 480),
-        _make_event("web_search", "OWASP LLM security guidelines", 450),
-        _make_event("web_search", "AI safety research 2024", 420),
-        _make_event("read_file", "report.txt", 390),
-        _make_event("web_search", "machine learning deployment patterns", 360),
-        _make_event("web_search", "agent security frameworks", 330),
-        _make_event("read_file", "report.txt", 300),
-        _make_event("web_search", "LangChain security best practices", 270),
-        _make_event("web_search", "retrieval augmented generation security", 240),
-        _make_event("read_file", "report.txt", 210),
-        _make_event("web_search", "AI agent monitoring systems", 180),
-    ]
-    redis_store.set_baseline("research_agent", events)
-    print(f"[seed] research_agent baseline: {len(events)} events")
+def seed():
+    now = time.time()
 
+    for role, events in _BASELINES.items():
+        timestamped = []
+        for i, ev in enumerate(events):
+            ev = dict(ev, timestamp=now - (len(events) - i) * 60)
+            timestamped.append(ev)
+        redis_store.set_baseline(role, timestamped)
+        print(f"  Baseline seeded: {role} ({len(timestamped)} events)")
 
-def seed_data_agent_baseline():
-    events = [
-        _make_event("read_file", "data/records.csv", 600),
-        _make_event("http_post", "http://internal-api.corp/ingest", 570),
-        _make_event("read_file", "data/config.json", 540),
-        _make_event("http_post", "http://internal-api.corp/update", 510),
-        _make_event("read_file", "data/records.csv", 480),
-        _make_event("http_post", "http://internal-api.corp/ingest", 450),
-        _make_event("read_file", "data/schema.json", 420),
-        _make_event("http_post", "http://internal-api.corp/validate", 390),
-        _make_event("read_file", "data/records.csv", 360),
-        _make_event("http_post", "http://internal-api.corp/ingest", 330),
-        _make_event("read_file", "data/config.json", 300),
-        _make_event("http_post", "http://internal-api.corp/update", 270),
-        _make_event("read_file", "data/records.csv", 240),
-        _make_event("http_post", "http://internal-api.corp/ingest", 210),
-        _make_event("read_file", "data/schema.json", 180),
-    ]
-    redis_store.set_baseline("data_agent", events)
-    print(f"[seed] data_agent baseline: {len(events)} events")
+    for session_id, role in _SESSIONS.items():
+        events = _BASELINES[role]
+        last5 = [dict(e, timestamp=now - (5 - i) * 60) for i, e in enumerate(events[-5:])]
+        redis_store.init_session(session_id)
+        for ev in last5:
+            redis_store.append_to_session(session_id, ev)
+        print(f"  Session hydrated: {session_id} (5 events)")
 
-
-def seed_admin_agent_baseline():
-    events = [
-        _make_event("web_search", "system status dashboard", 600),
-        _make_event("read_file", "config/system.yaml", 560),
-        _make_event("execute_shell", "systemctl status nginx", 520),
-        _make_event("web_search", "deployment checklist 2024", 480),
-        _make_event("read_file", "logs/access.log", 440),
-        _make_event("http_post", "http://internal-api.corp/admin/update", 400),
-        _make_event("execute_shell", "df -h", 360),
-        _make_event("web_search", "kubernetes pod status", 320),
-        _make_event("read_file", "config/nginx.conf", 280),
-        _make_event("execute_shell", "ps aux | head -20", 240),
-    ]
-    redis_store.set_baseline("admin_agent", events)
-    print(f"[seed] admin_agent baseline: {len(events)} events")
-
-
-def seed_demo_session():
-    """Seed 8 clean prior requests for demo-session-001 (research_agent_001)."""
-    import uuid
-    events = [
-        _make_event("web_search", "AI research papers machine learning", 120),
-        _make_event("web_search", "neural networks deep learning survey", 110),
-        _make_event("read_file", "report.txt", 100),
-        _make_event("web_search", "transformer models attention mechanism", 90),
-        _make_event("read_file", "report.txt", 80),
-        _make_event("web_search", "AI safety alignment research", 70),
-        _make_event("web_search", "reinforcement learning from human feedback", 60),
-        _make_event("read_file", "report.txt", 50),
-    ]
-    redis_store.init_session("demo-session-001")
-    for event in events:
-        redis_store.append_to_session("demo-session-001", event)
-    print(f"[seed] demo-session-001: {len(events)} events")
+    print(
+        "\nBaseline seeded: "
+        + ", ".join(f"{r} ({len(e)})" for r, e in _BASELINES.items())
+        + ". Session histories initialized."
+    )
 
 
 if __name__ == "__main__":
-    print("Seeding AgentGuard-X Redis baseline data...")
-    seed_research_agent_baseline()
-    seed_data_agent_baseline()
-    seed_admin_agent_baseline()
-    seed_demo_session()
-    print("Seeding complete.")
+    seed()

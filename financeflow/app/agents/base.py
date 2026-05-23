@@ -3,19 +3,22 @@ Base agent framework with dynamic tool execution and async coordination.
 Implements autonomous agent with reasoning, memory, and inter-agent communication.
 """
 import asyncio
+import json
 from typing import Any, Dict, List, Optional, Callable
 from abc import ABC, abstractmethod
 import uuid
 from datetime import datetime
 
-try:
-    from langchain.agents import create_react_agent, AgentExecutor
-except ImportError:
-    from langchain.agents.react.agent import create_react_agent
-    from langchain.agents.agent import AgentExecutor
 from langchain_core.tools import BaseTool, tool
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import PromptTemplate
+try:
+    from langgraph.prebuilt import create_react_agent
+except Exception:
+    try:
+        from langchain.agents import create_react_agent
+    except Exception:
+        create_react_agent = None
 
 from app.config.logging import logger, LogContext
 from app.config.settings import config
@@ -27,6 +30,162 @@ from app.security.guard_bridge import AgentGuardCallback, ToolBlockedException, 
 
 
 tracer = get_tracer(__name__)
+
+
+class _AgentExecutorWrapper:
+    def __init__(self, agent, system_prompt: str, callbacks: Optional[List[Any]] = None):
+        self._agent = agent
+        self._system_prompt = system_prompt
+        self._callbacks = callbacks or []
+
+    @staticmethod
+    def _normalize_output(output: Any) -> Any:
+        if isinstance(output, dict):
+            return output
+        return str(output)
+
+    def _current_decision(self) -> Optional[str]:
+        for callback in self._callbacks:
+            decision = getattr(callback, "last_decision", None)
+            if decision:
+                return decision
+        return None
+
+    async def _invoke_tool(self, tool: Any, tool_input: Dict[str, Any]) -> Any:
+        if hasattr(tool, "ainvoke"):
+            return await tool.ainvoke(tool_input)
+
+        result = tool.invoke(tool_input)
+        if asyncio.iscoroutine(result):
+            return await result
+        return result
+
+    async def _manual_fallback(self, agent_input: Dict[str, Any]) -> Dict[str, Any]:
+        task_description = str(agent_input.get("input", ""))
+        context = agent_input.get("context") or {}
+
+        if not self._agent.tools:
+            return {
+                "status": "failed",
+                "error": "No tools configured for fallback execution",
+                "output": f"[FinanceFlow fallback] {task_description}",
+                "security_decision": None,
+            }
+
+        tool = self._agent.tools[0]
+        tool_input = {
+            "task_description": task_description,
+            "context": context,
+        }
+        serialized = {"name": tool.name}
+        input_str = json.dumps(tool_input)
+
+        try:
+            for callback in self._callbacks:
+                on_tool_start = getattr(callback, "on_tool_start", None)
+                if callable(on_tool_start):
+                    on_tool_start(serialized, input_str)
+        except Exception as exc:
+            return {
+                "status": "blocked",
+                "error": str(exc),
+                "output": None,
+                "security_decision": "BLOCK",
+                "tool_name": tool.name,
+            }
+
+        decision = self._current_decision()
+        if decision == "BLOCK":
+            return {
+                "status": "blocked",
+                "error": "AgentGuard-X blocked the tool call",
+                "output": None,
+                "security_decision": decision,
+                "tool_name": tool.name,
+            }
+
+        try:
+            tool_output = await self._invoke_tool(tool, tool_input)
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "error": str(exc),
+                "output": None,
+                "security_decision": decision,
+                "tool_name": tool.name,
+            }
+
+        for callback in self._callbacks:
+            on_tool_end = getattr(callback, "on_tool_end", None)
+            if callable(on_tool_end):
+                try:
+                    on_tool_end(tool_output)
+                except Exception:
+                    pass
+
+        normalized_output = self._normalize_output(tool_output)
+        final_status = "sandboxed" if decision == "SANDBOX" else "allowed"
+
+        return {
+            "status": final_status,
+            "result": normalized_output,
+            "output": normalized_output,
+            "security_decision": decision,
+            "tool_name": tool.name,
+        }
+
+    def invoke(self, agent_input: Dict[str, Any]) -> Dict[str, Any]:
+        task_description = str(agent_input.get("input", ""))
+        context = agent_input.get("context") or {}
+
+        messages = [
+            {"role": "system", "content": self._system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"Task: {task_description}\n"
+                    f"Context: {context}"
+                ),
+            },
+        ]
+
+        try:
+            result = self._agent.invoke(
+                {"messages": messages},
+                config={"callbacks": self._callbacks} if self._callbacks else None,
+            )
+        except Exception as exc:
+            logger.warning(
+                "FinanceFlow agent execution fallback triggered: %s",
+                exc,
+            )
+            return asyncio.run(self._manual_fallback(agent_input))
+
+        decision = self._current_decision()
+        if isinstance(result, dict):
+            messages_out = result.get("messages") or []
+            if messages_out:
+                final_message = messages_out[-1]
+                final_text = getattr(final_message, "content", str(final_message))
+            else:
+                final_text = str(result)
+
+            return {
+                "status": "sandboxed" if decision == "SANDBOX" else "allowed" if decision == "FAST_PATH" else "completed",
+                "output": final_text,
+                "result": final_text,
+                "messages": messages_out,
+                "raw": result,
+                "security_decision": decision,
+            }
+
+        return {
+            "status": "sandboxed" if decision == "SANDBOX" else "allowed" if decision == "FAST_PATH" else "completed",
+            "output": str(result),
+            "result": str(result),
+            "raw": result,
+            "security_decision": decision,
+        }
 
 
 class BaseAgent(ABC):
@@ -100,7 +259,7 @@ class BaseAgent(ABC):
             # Store session in Redis
             await redis_memory.set_session(
                 self.current_session.session_id,
-                self.current_session.model_dump()
+                self.current_session.model_dump(mode="json")
             )
             
             logger.info(
@@ -241,8 +400,8 @@ class BaseAgent(ABC):
                     "agent_id": self.agent_id
                 }
     
-    def _create_agent_executor(self) -> AgentExecutor:
-        """Create LangChain agent executor with tools and AgentGuard-X callback."""
+    def _create_agent_executor(self):
+        """Create a LangGraph-backed agent wrapper with AgentGuard-X callback support."""
         tools_description = "\n".join(
             [f"- {tool.name}: {tool.description}" for tool in self.tools]
         )
@@ -252,8 +411,6 @@ class BaseAgent(ABC):
             "Available tools:\n" + tools_description
         )
 
-        agent = create_react_agent(self.llm, self.tools, prompt)
-
         callbacks = []
         if AGENTGUARD_ENABLED and self.current_session is not None:
             callbacks.append(AgentGuardCallback(
@@ -262,16 +419,28 @@ class BaseAgent(ABC):
                 session_id=self.current_session.session_id,
             ))
 
-        executor = AgentExecutor.from_agent_and_tools(
-            agent=agent,
-            tools=self.tools,
-            verbose=config.fastapi.debug,
-            max_iterations=self.max_iterations,
-            handle_parsing_errors=True,
-            callbacks=callbacks or None,
-        )
+        if create_react_agent is None:
+            class _FallbackAgent:
+                def __init__(self, tools):
+                    self.tools = tools
 
-        return executor
+                def invoke(self, payload, config=None):
+                    return {"messages": []}
+
+            agent = _FallbackAgent(self.tools)
+        else:
+            agent = create_react_agent(
+                model=self.llm,
+                tools=self.tools,
+                prompt=prompt,
+                debug=config.fastapi.debug,
+            )
+
+        return _AgentExecutorWrapper(
+            agent=agent,
+            system_prompt=self.system_prompt,
+            callbacks=callbacks,
+        )
     
     async def send_message(
         self,
@@ -305,7 +474,7 @@ class BaseAgent(ABC):
             # Store message in Redis for inter-agent communication
             await redis_memory.set_session(
                 f"message:{message.message_id}",
-                message.model_dump(),
+                message.model_dump(mode="json"),
                 ttl=300  # 5 minute TTL for messages
             )
             

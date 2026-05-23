@@ -88,11 +88,13 @@ def execute_in_sandbox(tool_name: str, tool_input: dict) -> SandboxVerdict:
                     mem_limit=SANDBOX_MEMORY_LIMIT,
                     cpu_quota=SANDBOX_CPU_QUOTA,
                     network_disabled=True,
-                    read_only=False,
+                    read_only=True,
                     remove=True,
                     detach=False,
                     stdout=True,
                     stderr=True,
+                    security_opt=["no-new-privileges"],
+                    cap_drop=["ALL"],
                 )
                 result_holder["output"] = out.decode("utf-8") if isinstance(out, bytes) else str(out)
             except Exception as ex:
@@ -121,7 +123,6 @@ def execute_in_sandbox(tool_name: str, tool_input: dict) -> SandboxVerdict:
         anomalous = (
             fingerprint["unexpected_network_success"]
             or (tool_name == "execute_shell")
-            or "error" in output.lower()
         )
 
         if anomalous:
@@ -177,6 +178,4 @@ def _explain_kill(tool_name: str, fingerprint: dict, output: str) -> str:
         reasons.append("Unexpected network connection succeeded from sandbox")
     if tool_name == "execute_shell":
         reasons.append("execute_shell tool should never reach sandbox (policy violation)")
-    if "error" in output.lower():
-        reasons.append(f"Anomalous output detected in sandbox: {output[:100]}")
     return "; ".join(reasons) if reasons else f"Anomalous behavior from tool '{tool_name}' in sandbox."

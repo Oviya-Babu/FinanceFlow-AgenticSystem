@@ -1,0 +1,388 @@
+# ============================================================================
+# ENVIRONMENT & SECRETS (CRITICAL - NEVER COMMIT)
+# ============================================================================
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+.env.development
+*.pem
+*.key
+*.crt
+*.csr
+*.pfx
+*.p12
+secrets.json
+.aws/
+.gcp/
+.azure/
+
+# ============================================================================
+# CERTIFICATES & TLS (CRITICAL SECURITY)
+# ============================================================================
+certs/
+tls/
+ca-certificates/
+*.cert
+*.cer
+private_keys/
+public_keys/
+
+# ============================================================================
+# PYTHON ENVIRONMENT & DEPENDENCIES
+# ============================================================================
+.venv/
+venv/
+env/
+ENV/
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+site-packages/
+
+# ============================================================================
+# PYTHON CACHE & COMPILED FILES
+# ============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.c
+*.so
+
+# ============================================================================
+# TESTING & COVERAGE (DO NOT COMMIT)
+# ============================================================================
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.hypothesis/
+test-results.xml
+*.cover
+.coverage.*
+.cache
+nosetests.xml
+.nox/
+junit.xml
+pytest.ini
+
+# ============================================================================
+# IDE & EDITOR FILES
+# ============================================================================
+.vscode/
+.vscode-server/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+.sublime-settings
+.editorconfig
+.env.local.php
+
+# ============================================================================
+# BUILD & DISTRIBUTION ARTIFACTS
+# ============================================================================
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ============================================================================
+# MONITORING & METRICS (SENSITIVE - DO NOT COMMIT)
+# ============================================================================
+prometheus_data/
+alertmanager_data/
+grafana_data/
+metrics/
+*.metrics
+prometheus/data/
+alertmanager/data/
+grafana/data/
+security-scan-results/
+*.log
+
+# ============================================================================
+# DATABASE & CACHE FILES (DO NOT COMMIT)
+# ============================================================================
+redis_data/
+*.db
+*.sqlite
+*.sqlite3
+*.rdb
+dump.rdb
+appendonly.aof
+nodes.conf
+
+# ============================================================================
+# DOCKER ARTIFACTS (TEMPORARY)
+# ============================================================================
+docker-volumes/
+docker-data/
+.dockerignore
+Dockerfile.dev
+docker-compose.override.yaml
+docker-compose.local.yaml
+step_linux_amd64.tar.gz
+
+# ============================================================================
+# LOGS & TEMPORARY FILES
+# ============================================================================
+*.log
+*.log.*
+logs/
+log/
+tmp/
+temp/
+.tmp/
+*.tmp
+*.bak
+*.backup
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ============================================================================
+# OPA & POLICY ARTIFACTS (SENSITIVE - DO NOT COMMIT GENERATED)
+# ============================================================================
+opa_build/
+opa.bundle
+bundle.tar.gz
+decision_logs/
+policy_bundles/
+compiled_policies/
+
+# ============================================================================
+# KUBERNETES & DEPLOYMENT (DO NOT COMMIT MANIFESTS WITH SECRETS)
+# ============================================================================
+k8s/secrets/
+k8s/local/
+kubeconfig
+*.kubeconfig
+kube-config
+.kube/
+
+# ============================================================================
+# CI/CD ARTIFACTS
+# ============================================================================
+.github/workflows/local/
+.github/local/
+ci-build/
+ci-artifacts/
+.gitlab-ci.local.yml
+.circleci/local/
+
+# ============================================================================
+# SECURITY SCANNING ARTIFACTS (RESULTS ONLY - DON'T COMMIT FULL REPORTS)
+# ============================================================================
+trivy-results/
+sbom/
+scan-results/
+*.sarif
+security-report-*.json
+dependency-check-*.json
+
+# ============================================================================
+# NODE MODULES & FRONTEND (IF APPLICABLE)
+# ============================================================================
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json.bak
+dist/
+build/
+
+# ============================================================================
+# SYSTEM FILES (OS-SPECIFIC)
+# ============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.AppleDouble
+.LSOverride
+*.swp
+*.swo
+*~
+.~*
+
+# ============================================================================
+# GIT-RELATED FILES
+# ============================================================================
+.git/
+.gitignore.local
+.gitattributes.local
+
+# ============================================================================
+# DEVELOPMENT ONLY (LOCAL TESTING)
+# ============================================================================
+.env.test
+test.db
+test_*.py.bak
+manual_test_*.py
+demo_*.py
+local_*
+*.local.*
+
+# ============================================================================
+# CREDENTIALS & API KEYS (CRITICAL - NEVER COMMIT)
+# ============================================================================
+credentials.json
+tokens.json
+api_keys.json
+oauth_secrets.json
+jwt_keys/
+private_keys/
+*.pem
+*.key
+*.pkcs12
+.aws/
+.gce/
+.azure/
+
+# ============================================================================
+# SENSITIVE CONFIGURATION (NEVER COMMIT)
+# ============================================================================
+config.prod.yaml
+config.production.json
+settings.prod.py
+redis-hardened.conf.prod
+opa-hardened.conf.prod
+alertmanager.prod.yml
+prometheus.prod.yml
+
+# ============================================================================
+# BUILD OUTPUT & CACHE
+# ============================================================================
+.cache/
+*.cache
+target/
+out/
+output/
+results/
+
+# ============================================================================
+# PYTHON-SPECIFIC
+# ============================================================================
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+.nox/
+.pytest_cache/
+coverage.xml
+
+# ============================================================================
+# IDE WORKSPACE FILES
+# ============================================================================
+.vscode/settings.json
+.vscode/launch.json
+.vscode/extensions.json
+.idea/
+*.iml
+*.iws
+*.ipr
+.project
+.pydevproject
+.settings/
+
+# ============================================================================
+# DOCKER BUILD CACHE (OPTIONAL - KEEP FOR FASTER BUILDS)
+# ============================================================================
+# Uncomment below to NOT commit docker build cache
+# docker-build-cache/
+# .buildkit/
+
+# ============================================================================
+# GRAFANA DASHBOARDS (LOCAL INSTANCES ONLY)
+# ============================================================================
+grafana/data/
+grafana_backup/
+
+# ============================================================================
+# TEMPORARY TEST FILES
+# ============================================================================
+test_results/
+test_*.json
+test_*.log
+*.test.py
+
+# ============================================================================
+# BACKUP FILES
+# ============================================================================
+*.bak
+*.backup
+*.orig
+*.swp
+*.tmp
+*.~
+
+# ============================================================================
+# EDITOR BACKUP FILES
+# ============================================================================
+*.*~
+*.backup~
+.*.swp
+.*.swo
+
+# ============================================================================
+# WHITELIST - IMPORTANT FILES TO ALWAYS COMMIT
+# ============================================================================
+!.gitignore
+!.gitkeep
+!requirements.txt
+!Makefile
+!README.md
+!LICENSE
+!docker/
+!policies/
+!app/
+!tests/
+!docs/
+!.github/workflows/
+!prometheus/rules/
+!grafana/provisioning/

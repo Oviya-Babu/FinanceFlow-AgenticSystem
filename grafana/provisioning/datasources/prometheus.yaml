@@ -1,0 +1,61 @@
+# Grafana Datasource Provisioning
+# File: grafana/provisioning/datasources/prometheus.yaml
+#
+# Automatically configures Prometheus datasource on Grafana startup
+
+apiVersion: 1
+
+datasources:
+  # Delete datasources that are not defined in this file
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus-uid
+    access: proxy
+    url: https://prometheus:9090
+    isDefault: true
+    editable: true
+    
+    # Authentication (optional)
+    basicAuth: false
+    # basicAuthUser: prometheus
+    # basicAuthPassword: secret
+    
+    # HTTP settings
+    httpMethod: POST
+    timeout: 30s
+    
+    # JSON data for prometheus-specific settings
+    jsonData:
+      # Enable alerting
+      alertmanagerUid: alertmanager-uid
+      
+      # Custom HTTP headers
+      customHttpHeaders:
+        X-Custom-Header: AgentGuard-Monitor
+      
+      # Query timeout
+      queryTimeout: 30s
+      
+      # HTTP request method
+      httpMethod: POST
+    
+    # Credentials (for secure storage)
+    secureJsonData:
+      basicAuthPassword: ''
+    
+    # Version
+    version: 1
+
+  # Optional: Alertmanager datasource
+  - name: Alertmanager
+    type: alertmanager
+    uid: alertmanager-uid
+    access: proxy
+    url: http://alertmanager:9093
+    isDefault: false
+    editable: true
+    
+    jsonData:
+      handleGrafanaAlert: true
+    
+    version: 1

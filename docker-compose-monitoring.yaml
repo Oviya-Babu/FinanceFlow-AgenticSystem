@@ -1,0 +1,305 @@
+version: '3.8'
+
+# Complete AgentGuard-X Monitoring Stack
+# Includes: Prometheus, Alertmanager, Grafana
+#
+# Usage:
+#   docker-compose -f docker-compose-monitoring.yaml up -d
+#   
+# Access:
+#   Prometheus:    http://localhost:9090
+#   Alertmanager:  http://localhost:9093  
+#   Grafana:       http://localhost:3000 (admin/admin)
+
+services:
+  # ========================================================================
+  # PROMETHEUS - Metrics Collection & Alerting Rules Engine
+  # ========================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: agentguard-prometheus
+    restart: unless-stopped
+    
+    ports:
+      - "9090:9090"
+    
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    
+    environment:
+      - PROMETHEUS_STORAGE_TSDB_RETENTION_SIZE=500MB
+      - PROMETHEUS_STORAGE_TSDB_RETENTION_TIME=15d
+    
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.size=500MB'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    
+    labels:
+      - "com.example.description=AgentGuard Prometheus Metrics"
+    
+    networks:
+      - agentguard-monitoring
+    
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    depends_on:
+      - agentguard-gateway
+
+  # ========================================================================
+  # ALERTMANAGER - Alert Routing & Notification
+  # ========================================================================
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: agentguard-alertmanager
+    restart: unless-stopped
+    
+    ports:
+      - "9093:9093"
+    
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    
+    labels:
+      - "com.example.description=AgentGuard Alertmanager"
+    
+    networks:
+      - agentguard-monitoring
+    
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ========================================================================
+  # GRAFANA - Dashboard & Visualization
+  # ========================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: agentguard-grafana
+    restart: unless-stopped
+    
+    ports:
+      - "3000:3000"
+    
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin  # Change in production!
+      - GF_INSTALL_PLUGINS=grafana-worldmap-panel,grafana-piechart-panel
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      - GF_SECURITY_COOKIE_SECURE=false  # Set to true with HTTPS in production
+      - GF_LOG_LEVEL=info
+    
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+    
+    labels:
+      - "com.example.description=AgentGuard Grafana Dashboards"
+    
+    networks:
+      - agentguard-monitoring
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    depends_on:
+      - prometheus
+
+  # ========================================================================
+  # AGENTGUARD GATEWAY - Metrics Producer
+  # ========================================================================
+  agentguard-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentguard-gateway
+    restart: unless-stopped
+    
+    ports:
+      - "8000:8000"    # FastAPI Gateway
+      - "8182:8182"    # OPA Server
+      - "6380:6379"    # Redis (exposed from docker)
+    
+    environment:
+      - PYTHONUNBUFFERED=1
+      - OPA_URL=http://opa:8181
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=info
+      - PROMETHEUS_ENABLED=true
+    
+    volumes:
+      - ./policies:/app/policies:ro
+      - ./app:/app/app:ro
+    
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    
+    labels:
+      - "com.example.description=AgentGuard Security Gateway"
+    
+    networks:
+      - agentguard-monitoring
+      - agentguard-internal
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    depends_on:
+      - redis
+      - opa
+
+  # ========================================================================
+  # OPA - Policy Decision Engine
+  # ========================================================================
+  opa:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.opa-hardened
+    container_name: agentguard-opa
+    restart: unless-stopped
+    
+    ports:
+      - "8181:8181"
+    
+    environment:
+      - OPA_LOG_LEVEL=info
+      - OPA_DECISION_LOGS=true
+    
+    volumes:
+      - ./policies:/policies:ro
+    
+    labels:
+      - "com.example.description=AgentGuard OPA Policy Engine"
+    
+    networks:
+      - agentguard-internal
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-H", "Authorization: Bearer secret", "http://localhost:8181/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    security_opt:
+      - no-new-privileges:true
+    
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # ========================================================================
+  # REDIS - Session & Rate Limit Storage
+  # ========================================================================
+  redis:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.redis-hardened
+    container_name: agentguard-redis
+    restart: unless-stopped
+    
+    ports:
+      - "6380:6379"
+    
+    environment:
+      - REDIS_PASSWORD=changeme
+    
+    volumes:
+      - redis_data:/data
+      - ./docker/redis-hardened.conf:/etc/redis/redis.conf:ro
+      - ./docker/users.acl:/etc/redis/users.acl:ro
+    
+    command: redis-server /etc/redis/redis-hardened.conf
+    
+    labels:
+      - "com.example.description=AgentGuard Redis Cache"
+    
+    networks:
+      - agentguard-internal
+    
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "changeme", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    security_opt:
+      - no-new-privileges:true
+    
+    cap_drop:
+      - ALL
+    
+    read_only: true
+    tmpfs:
+      - /tmp
+
+networks:
+  agentguard-monitoring:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.1.0/24
+    labels:
+      - "com.example.description=AgentGuard Monitoring Stack"
+
+  agentguard-internal:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.2.0/24
+    labels:
+      - "com.example.description=AgentGuard Internal Services"
+
+volumes:
+  prometheus_data:
+    driver: local
+    labels:
+      - "com.example.description=Prometheus Data"
+  
+  alertmanager_data:
+    driver: local
+    labels:
+      - "com.example.description=Alertmanager Data"
+  
+  grafana_data:
+    driver: local
+    labels:
+      - "com.example.description=Grafana Data"
+  
+  redis_data:
+    driver: local
+    labels:
+      - "com.example.description=Redis Persistence"

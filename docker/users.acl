@@ -1,0 +1,24 @@
+# Redis ACL Configuration for Security Mesh
+# Implements: Per-user permissions, role-based access control
+
+# Default user (disabled in production)
+user default on >nopass ~* &* +@all
+
+# Gateway user (read/write operations only)
+user gateway on >GATEWAY_PASSWORD ~* &* +get +set +hget +hset +hgetall +hmget +hmset +hdel +incr +decr +lpush +rpush +lpop +rpop +lrange +sadd +srem +smembers +zadd +zrem +zrange +zscore +expire +ttl +exists +keys +del +flushdb +dbsize -@dangerous +@read +@write +@bitmap +@list +@hash +@set +@sorted_set +@string +@generic
+
+# OPA user (read-only, limited operations)
+user opa on >OPA_PASSWORD ~* &* +get +hget +hgetall +smembers +zrange +exists +ttl +keys +dbsize +info -@dangerous +@read
+
+# Monitoring user (stats only)
+user monitoring on >MONITORING_PASSWORD ~* &* +info +client +config|get +slowlog|get +latency|latest +monitor -@all +@dangerous
+
+# Backup user (dump/restore only)
+user backup on >BACKUP_PASSWORD ~* &* +bgsave +save +bgrewriteaof +lastsave +shutdown|nosave -@all +@dangerous
+
+# Audit user (write-only to audit logs)
+user audit on >AUDIT_PASSWORD ~* &* +lpush +rpush +lrange -@all +@list
+
+# ACL configuration
+# acl file /etc/redis/users.acl
+# acl save

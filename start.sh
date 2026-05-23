@@ -27,8 +27,16 @@ if redis-cli ping > /dev/null 2>&1; then
     echo "[✓] Redis already running"
 else
     echo "[+] Starting Redis..."
-    sudo systemctl start redis-server
-    sleep 1
+    docker rm -f agentguard-redis >/dev/null 2>&1 || true
+    if docker compose version >/dev/null 2>&1; then
+        docker compose -f "$REPO_ROOT/docker-compose.yaml" up -d redis
+    elif command -v docker-compose >/dev/null 2>&1; then
+        docker-compose -f "$REPO_ROOT/docker-compose.yaml" up -d redis
+    else
+        echo "ERROR: Docker Compose is not installed, and no Redis service is running."
+        exit 1
+    fi
+    sleep 2
 fi
 
 # ── Ollama ────────────────────────────────────────────────────────────────────
@@ -36,9 +44,14 @@ if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
     echo "[✓] Ollama already running"
 else
     echo "[+] Starting Ollama..."
-    ollama serve > "$LOG_DIR/ollama.log" 2>&1 &
-    echo $! > "$LOG_DIR/ollama.pid"
-    sleep 4
+    docker rm -f financeflow-ollama >/dev/null 2>&1 || true
+    docker run -d \
+        --name financeflow-ollama \
+        --restart unless-stopped \
+        -p 11434:11434 \
+        -v ollama_data:/root/.ollama \
+        ollama/ollama:0.1.32
+    sleep 5
 fi
 
 # ── OPA ───────────────────────────────────────────────────────────────────────
@@ -46,14 +59,9 @@ if curl -s http://localhost:8181/health > /dev/null 2>&1; then
     echo "[✓] OPA already running"
 else
     echo "[+] Starting OPA on :8181..."
-    opa run \
-        --server \
-        --addr :8181 \
-        --log-level error \
-        "$REPO_ROOT/AgentGuard-X/policies/" \
-        > "$LOG_DIR/opa.log" 2>&1 &
-    echo $! > "$LOG_DIR/opa.pid"
-    sleep 2
+    docker rm -f agentguard-opa >/dev/null 2>&1 || true
+    docker compose -f "$REPO_ROOT/docker-compose.yaml" up -d opa
+    sleep 5
 fi
 
 # ── AgentGuard-X (:8001) ──────────────────────────────────────────────────────

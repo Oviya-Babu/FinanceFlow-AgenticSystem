@@ -1,0 +1,80 @@
+# Hardened Redis Dockerfile for Security Mesh
+# Base: Alpine Linux with security patches
+# Implements: Minimal footprint, security scanning, non-root execution
+
+ARG ALPINE_VERSION=3.19.1
+FROM alpine:${ALPINE_VERSION} AS builder
+
+# Install build dependencies with security scanning
+RUN apk add --no-cache \
+    wget \
+    ca-certificates \
+    openssl \
+    && apk update \
+    && apk cache clean
+
+# Download and verify Redis
+ARG REDIS_VERSION=7.2.4
+ARG REDIS_SHA=48d0e4c56360ebcd88fa1038b3b10e80b83e4e9a71d21055c76833e77e5fb8f9
+RUN wget https://github.com/redis/redis/archive/${REDIS_VERSION}.tar.gz \
+    && echo "${REDIS_SHA}  ${REDIS_VERSION}.tar.gz" | sha256sum -c - \
+    && tar xzf ${REDIS_VERSION}.tar.gz \
+    && cd redis-${REDIS_VERSION} \
+    && make
+
+# Final image: Minimal runtime
+FROM alpine:${ALPINE_VERSION}
+
+# Install only runtime dependencies
+RUN apk add --no-cache \
+    ca-certificates \
+    openssl \
+    && apk update \
+    && apk upgrade \
+    && apk cache clean
+
+# Copy Redis from builder
+COPY --from=builder /redis-${REDIS_VERSION}/src/redis-server /usr/local/bin/
+COPY --from=builder /redis-${REDIS_VERSION}/src/redis-cli /usr/local/bin/
+
+# Create non-root user for Redis
+RUN addgroup -S redis && adduser -S redis -G redis
+
+# Create data directory with proper permissions
+RUN mkdir -p /data && chown -R redis:redis /data
+
+# Set secure permissions
+RUN chmod 755 /usr/local/bin/redis-server && \
+    chmod 755 /usr/local/bin/redis-cli
+
+# Copy hardened Redis configuration
+COPY --chown=redis:redis redis-hardened.conf /etc/redis/
+
+# Copy users ACL file for Redis access control
+COPY --chown=redis:redis users.acl /etc/redis/
+
+# Set secure permissions on config files
+RUN chmod 600 /etc/redis/redis-hardened.conf /etc/redis/users.acl
+
+# Security labels
+LABEL security.vendor="AgentGuard" \
+      security.level="critical" \
+      security.policy="minimal-footprint" \
+      security.scanning="enabled" \
+      audit.enabled="true"
+
+# Health check
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+    CMD redis-cli ping || exit 1
+
+# Switch to non-root user
+USER redis:redis
+
+# Expose Redis port (only within container network)
+EXPOSE 6379
+
+# Run Redis with ACL and security hardening
+ENTRYPOINT ["redis-server", "/etc/redis/redis-hardened.conf"]
+
+# Security: Read-only root filesystem
+# (Use --read-only flag when running container)
