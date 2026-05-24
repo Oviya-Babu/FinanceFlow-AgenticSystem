@@ -385,4 +385,4 @@ test_*.log
 !docs/
 !.github/workflows/
 !prometheus/rules/
-!grafana/provisioning/
+!grafana/provisioning/outputs/
