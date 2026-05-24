@@ -53,7 +53,7 @@ fi
 echo "[5/7] Starting AgentGuard-X Triage Engine..."
 pkill -f "uvicorn triage.main:app" 2>/dev/null || true
 sleep 0.5
-uvicorn triage.main:app --host 0.0.0.0 --port 8000 --reload > /tmp/agentguard.log 2>&1 &
+uvicorn triage.main:app --host 0.0.0.0 --port 8002 --reload > /tmp/agentguard.log 2>&1 &
 TRIAGE_PID=$!
 echo "Triage Engine PID: $TRIAGE_PID"
 echo "Waiting for startup (model loading takes ~15-20s)..."
@@ -64,7 +64,7 @@ echo "[6/7] Running health check..."
 python3 -c "
 import requests, json, sys
 try:
-    r = requests.get('http://localhost:8000/health', timeout=10)
+    r = requests.get('http://localhost:8002/health', timeout=10)
     health = r.json()
     print('Health:', json.dumps(health, indent=2))
     components = health.get('components', {})
@@ -86,8 +86,8 @@ echo ""
 echo "=========================================="
 echo "  AgentGuard-X ready."
 echo "  Run demo: python3 demo/run_flows.py"
-echo "  API docs: http://localhost:8000/docs"
-echo "  Health:   http://localhost:8000/health"
-echo "  Stats:    http://localhost:8000/stats"
+echo "  API docs: http://localhost:8002/docs"
+echo "  Health:   http://localhost:8002/health"
+echo "  Stats:    http://localhost:8002/stats"
 echo "  Logs:     tail -f /tmp/agentguard.log"
 echo "=========================================="

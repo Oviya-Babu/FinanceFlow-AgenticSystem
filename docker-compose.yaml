@@ -1,0 +1,97 @@
+version: "3.9"
+
+services:
+
+  redis:
+    image: redis:7-alpine
+    container_name: agentguard-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --loglevel notice
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - agentguard-net
+
+  opa:
+    image: openpolicyagent/opa:latest-static
+    container_name: agentguard-opa
+    ports:
+      - "8181:8181"
+    command: ["run", "--server", "--addr", "0.0.0.0:8181", "--log-level", "info", "/policies"]
+    volumes:
+      - ./AgentGuard-X/policies:/policies:ro
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8181/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - agentguard-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: agentguard-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./AgentGuard-X/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    restart: unless-stopped
+    networks:
+      - agentguard-net
+
+  loki:
+    image: grafana/loki:latest
+    container_name: agentguard-loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./AgentGuard-X/observability/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    restart: unless-stopped
+    networks:
+      - agentguard-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: agentguard-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=agentguard
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped
+    networks:
+      - agentguard-net
+
+volumes:
+  redis_data:
+  loki_data:
+  grafana_data:
+
+networks:
+  agentguard-net:
+    driver: bridge

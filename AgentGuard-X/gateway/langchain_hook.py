@@ -114,11 +114,21 @@ def _print_decision_block(response_data: dict, processing_time_ms: float) -> Non
 
 class AgentGuardCallback(BaseCallbackHandler):
 
-    def __init__(self, agent_id: str, agent_role: str, session_id: str):
+    def __init__(
+        self,
+        agent_id: str,
+        agent_role: str,
+        session_id: str,
+        financeflow_agent_name: str = "",
+    ):
         super().__init__()
         self.agent_id = agent_id
         self.agent_role = agent_role
         self.session_id = session_id
+        self.financeflow_agent_name = financeflow_agent_name
+        self.last_decision: Optional[str] = None
+        self.last_response_data: Optional[dict] = None
+        self._sequence_context: list = []
 
     def on_tool_start(
         self,
@@ -143,7 +153,12 @@ class AgentGuardCallback(BaseCallbackHandler):
             "agent_role": self.agent_role,
             "timestamp": time.time(),
             "request_id": request_id,
+            "sequence_context": list(self._sequence_context[-3:]),
+            "financeflow_agent": self.financeflow_agent_name,
         }
+        self._sequence_context.append(tool_name)
+        if len(self._sequence_context) > 10:
+            self._sequence_context = self._sequence_context[-10:]
 
         start = time.time()
         try:
@@ -168,7 +183,10 @@ class AgentGuardCallback(BaseCallbackHandler):
         elapsed = (time.time() - start) * 1000
         _print_decision_block(response_data, elapsed)
 
+        self.last_response_data = response_data
+
         decision = response_data.get("routing_decision", "BLOCK")
+        self.last_decision = decision
 
         if decision == "BLOCK":
             explanation = response_data.get("explanation", "Request blocked by AgentGuard-X.")

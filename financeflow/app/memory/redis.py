@@ -3,6 +3,8 @@ Enhanced secure Redis client with async support, authentication, and error handl
 Implements production-grade Redis integration for FinanceFlow + AgentGuard-X.
 """
 import json
+from datetime import date, datetime
+from uuid import UUID
 from typing import Any, Dict, Optional
 from redis.asyncio import Redis, from_url
 from redis.asyncio.connection import Retry
@@ -14,6 +16,50 @@ from app.config.logging import logger
 from app.observability.telemetry import get_tracer
 
 tracer = get_tracer(__name__)
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
+    if hasattr(value, "model_dump"):
+        return _json_safe(value.model_dump())
+    return value
+
+
+class _InMemoryRedis:
+    def __init__(self) -> None:
+        self._store: Dict[str, str] = {}
+
+    async def ping(self) -> bool:
+        return True
+
+    async def close(self) -> None:
+        return None
+
+    async def setex(self, key: str, ttl: int, value: str) -> None:
+        self._store[key] = value
+
+    async def get(self, key: str) -> Optional[str]:
+        return self._store.get(key)
+
+    async def append(self, key: str, value: str) -> int:
+        current = self._store.get(key, "")
+        self._store[key] = f"{current}{value}"
+        return len(self._store[key])
+
+    async def expire(self, key: str, ttl: int) -> bool:
+        return True
+
+    async def delete(self, key: str) -> int:
+        return 1 if self._store.pop(key, None) is not None else 0
 
 
 class SecureRedisMemory:
@@ -98,14 +144,14 @@ class SecureRedisMemory:
                 raise
             
             except RedisError as e:
-                logger.error(f"Redis connection error: {e}")
-                span.set_attribute("status", "connection_failed")
-                raise
+                logger.warning(f"Redis unavailable, using in-memory fallback: {e}")
+                self.redis = _InMemoryRedis()
+                span.set_attribute("status", "memory_fallback")
             
             except Exception as e:
-                logger.error(f"Unexpected Redis error: {e}")
-                span.set_attribute("status", "error")
-                raise
+                logger.warning(f"Unexpected Redis error, using in-memory fallback: {e}")
+                self.redis = _InMemoryRedis()
+                span.set_attribute("status", "memory_fallback")
     
     async def disconnect(self) -> None:
         """Close Redis connection safely."""
@@ -140,7 +186,7 @@ class SecureRedisMemory:
                 await self.redis.setex(
                     f"session:{session_id}",
                     ttl,
-                    json.dumps(data)
+                    json.dumps(_json_safe(data))
                 )
             except RedisError as e:
                 logger.error(f"Failed to set session: {e}")
@@ -189,7 +235,7 @@ class SecureRedisMemory:
                 await self.redis.setex(
                     f"agent:context:{agent_id}",
                     ttl,
-                    json.dumps(context)
+                    json.dumps(_json_safe(context))
                 )
             except RedisError as e:
                 logger.error(f"Failed to set agent context: {e}")
@@ -258,7 +304,7 @@ class SecureRedisMemory:
                 await self.redis.setex(
                     f"tool_cache:{tool_key}",
                     ttl,
-                    json.dumps(result) if not isinstance(result, str) else result
+                    json.dumps(_json_safe(result)) if not isinstance(result, str) else result
                 )
             except RedisError as e:
                 logger.error(f"Failed to cache tool result: {e}")

@@ -1,0 +1,215 @@
+# Prometheus Alert Rules for AgentGuard-X OPA Monitoring
+# File: prometheus/rules/opa-alerts.yaml
+#
+# Deploy with: prometheus --config.file=prometheus.yml
+
+groups:
+  - name: opa_alerts
+    interval: 30s
+    rules:
+      # =================================================================
+      # CRITICAL ALERTS - OPA Unavailability
+      # =================================================================
+      
+      - alert: OPAServerDown
+        expr: opa_up == 0
+        for: 30s
+        labels:
+          severity: critical
+          component: opa
+          service: agentguard
+        annotations:
+          summary: "OPA Server is DOWN"
+          description: "OPA policy engine has been unavailable for {{ $value }} seconds. Policy decisions cannot be evaluated. IMMEDIATE investigation required."
+          dashboard: "http://grafana:3000/d/opa-system-health"
+          runbook: "https://wiki.company.com/agentguard/runbooks/opa-down"
+      
+      # =================================================================
+      # CRITICAL ALERTS - Policy Syntax Errors
+      # =================================================================
+      
+      - alert: PolicyCompilationFailed
+        expr: opa_policy_compilation_status{policy!=""} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: opa
+          service: agentguard
+        annotations:
+          summary: "OPA Policy Compilation Failed"
+          description: "Policy {{ $labels.policy }} failed to compile. This prevents OPA from enforcing security policies. Fix policy syntax immediately."
+          dashboard: "http://grafana:3000/d/opa-system-health"
+          runbook: "https://wiki.company.com/agentguard/runbooks/policy-compilation-failed"
+      
+      - alert: PolicyEvaluationErrors
+        expr: sum(rate(opa_policy_evaluation_errors_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: opa
+          service: agentguard
+        annotations:
+          summary: "OPA Policy Evaluation Errors Detected"
+          description: "OPA is encountering errors during policy evaluation. Current error rate: {{ $value }} errors/sec. Investigate error logs."
+          dashboard: "http://grafana:3000/d/opa-system-health"
+      
+      # =================================================================
+      # CRITICAL ALERTS - Non-Deterministic Decisions (MUST BE ZERO)
+      # =================================================================
+      
+      - alert: NonDeterministicDecisions
+        expr: sum(rate(decision_consistency_check_failures[5m])) > 0
+        for: 10s
+        labels:
+          severity: critical
+          component: opa
+          service: agentguard
+        annotations:
+          summary: "CRITICAL: Non-Deterministic Decisions Detected"
+          description: "OPA is making inconsistent decisions! Same request → Different verdict. This is a critical bug in OPA policy logic. IMMEDIATE investigation and rollback required."
+          dashboard: "http://grafana:3000/d/opa-correctness-validation"
+          runbook: "https://wiki.company.com/agentguard/runbooks/non-deterministic-decisions"
+      
+      # =================================================================
+      # WARNING ALERTS - Performance Issues
+      # =================================================================
+      
+      - alert: OPASlowDecisions
+        expr: histogram_quantile(0.95, rate(opa_decision_latency_ms_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: opa
+          service: agentguard
+        annotations:
+          summary: "OPA Decision Latency Elevated"
+          description: "95th percentile OPA decision latency is {{ $value }}ms (target: <3ms). Performance degradation detected."
+          dashboard: "http://grafana:3000/d/opa-system-health"
+      
+      - alert: OPACriticalLatency
+        expr: histogram_quantile(0.95, rate(opa_decision_latency_ms_bucket[5m])) > 10
+        for: 1m
+        labels:
+          severity: critical
+          component: opa
+          service: agentguard
+        annotations:
+          summary: "OPA Decisions are VERY SLOW"
+          description: "95th percentile OPA decision latency is {{ $value }}ms (critical threshold: >10ms). Impact: Request processing severely delayed. Investigate OPA server load and policy complexity."
+          dashboard: "http://grafana:3000/d/opa-system-health"
+      
+      # =================================================================
+      # WARNING ALERTS - Rate Limiting
+      # =================================================================
+      
+      - alert: HighDenialRate
+        expr: (sum(rate(opa_decisions_total{verdict="deny"}[5m])) / sum(rate(opa_decisions_total[5m]))) > 0.10
+        for: 5m
+        labels:
+          severity: warning
+          component: opa
+          service: agentguard
+        annotations:
+          summary: "High OPA Denial Rate"
+          description: "OPA denial rate is {{ $value | humanizePercentage }} (normal: <5%). Possible issues: (1) Policy misconfiguration, (2) Rate limiting too aggressive, (3) Agent misbehavior."
+          dashboard: "http://grafana:3000/d/opa-decision-overview"
+      
+      - alert: AgentRateLimitExceeded
+        expr: agent_rate_limit_percentage{limit_tier="per_sec"} > 90
+        for: 2m
+        labels:
+          severity: warning
+          component: gateway
+          service: agentguard
+        annotations:
+          summary: "Agent Rate Limit Nearly Exceeded"
+          description: "Agent {{ $labels.agent_role }} is at {{ $value | humanize }}% of per-second rate limit. Risk of hitting hard limit."
+          dashboard: "http://grafana:3000/d/agent-compliance"
+      
+      # =================================================================
+      # INFO ALERTS - Monitoring & Compliance
+      # =================================================================
+      
+      - alert: FalsePositiveDetected
+        expr: sum(rate(opa_false_positive_count_total[1h])) > 0
+        for: 10m
+        labels:
+          severity: info
+          component: opa
+          service: agentguard
+        annotations:
+          summary: "OPA False Positive Detected"
+          description: "A legitimate agent was denied access. Review policy rules: {{ $labels.agent_role }} / {{ $labels.tool_name }}. Count: {{ $value }}"
+          dashboard: "http://grafana:3000/d/opa-correctness-validation"
+      
+      - alert: ContextRestrictionTriggered
+        expr: sum(rate(opa_context_restrictions_triggered[1h])) > 0
+        for: 30m
+        labels:
+          severity: info
+          component: opa
+          service: agentguard
+        annotations:
+          summary: "Context-Based Restriction Triggered"
+          description: "Agent {{ $labels.agent_role }} exceeded context-based restrictions. Restriction type: {{ $labels.restriction_type }}. Review policy configuration."
+          dashboard: "http://grafana:3000/d/opa-policy-enforcement"
+
+---
+
+# Prometheus Configuration Fragment
+# Add this to prometheus.yml under `rule_files:`
+#
+# rule_files:
+#   - 'prometheus/rules/opa-alerts.yaml'
+#
+# And configure alertmanager:
+#
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#             - localhost:9093
+
+# Alert Routing Configuration (alertmanager.yml)
+# 
+# global:
+#   slack_api_url: 'https://hooks.slack.com/services/YOUR/WEBHOOK/URL'
+#   pagerduty_url: 'https://events.pagerduty.com/v2/enqueue'
+#
+# route:
+#   receiver: 'default'
+#   group_by: ['alertname', 'severity', 'component']
+#   group_wait: 10s
+#   group_interval: 10s
+#   repeat_interval: 1h
+#
+#   routes:
+#     - match:
+#         severity: critical
+#       receiver: 'critical'
+#       continue: true
+#       repeat_interval: 5m
+#
+#     - match:
+#         severity: warning
+#       receiver: 'warning'
+#       repeat_interval: 30m
+#
+# receivers:
+#   - name: 'default'
+#     slack_configs:
+#       - channel: '#monitoring'
+#         title: 'AgentGuard-X Alert: {{ .GroupLabels.alertname }}'
+#
+#   - name: 'critical'
+#     slack_configs:
+#       - channel: '#critical-alerts'
+#         title: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
+#     pagerduty_configs:
+#       - routing_key: 'YOUR_ROUTING_KEY'
+#         description: '{{ .GroupLabels.alertname }} - {{ index .Alerts 0 | .Annotations.description }}'
+#
+#   - name: 'warning'
+#     slack_configs:
+#       - channel: '#agentguard-alerts'
+#         title: '⚠️ WARNING: {{ .GroupLabels.alertname }}'

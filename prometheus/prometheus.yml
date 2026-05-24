@@ -1,0 +1,195 @@
+# Prometheus Configuration for AgentGuard-X OPA Monitoring
+# File: prometheus/prometheus.yml
+#
+# Usage:
+#   prometheus --config.file=prometheus/prometheus.yml
+
+global:
+  # How often to scrape targets for metrics
+  scrape_interval: 15s
+  
+  # How often to evaluate alerting rules
+  evaluation_interval: 15s
+  
+  # Global query timeout
+  query_timeout: 2m
+  
+  # External labels added to all time series
+  external_labels:
+    monitor: 'agentguard-opa-monitor'
+    environment: 'production'
+    team: 'security'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - localhost:9093
+  
+  # How long to wait for alertmanager to respond
+  alert_relabel_configs:
+    # Ensure all alerts have severity label
+    - source_labels: [__name__]
+      regex: 'opa_.*'
+      target_label: 'component'
+      replacement: 'opa'
+
+# Load alert rules
+rule_files:
+  - 'prometheus/rules/opa-alerts.yaml'
+  - 'prometheus/rules/*.yaml'
+
+# Scrape configurations
+scrape_configs:
+  # ====================================================================
+  # AgentGuard Gateway - Main Metrics Target
+  # ====================================================================
+  - job_name: 'agentguard-gateway'
+    
+    # Override global settings for this job
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    
+    # How to relabel targets
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '([^:]+)(?::\d+)?'
+        replacement: '${1}:8000'
+    
+    # Metrics path and query
+    metrics_path: '/metrics'
+    
+    # HTTP scheme (http or https)
+    scheme: 'http'
+    
+    # Static targets
+    static_configs:
+      - targets:
+          - 'localhost:8000'
+        labels:
+          service: 'agentguard'
+          component: 'gateway'
+          environment: 'production'
+    
+    # Scrape only metrics matching these patterns
+    metric_relabel_configs:
+      # Keep OPA-related metrics
+      - source_labels: [__name__]
+        regex: 'opa_.*|agent_.*|decision_.*'
+        action: keep
+      
+      # Add environment label
+      - source_labels: [__name__]
+        target_label: environment
+        replacement: 'production'
+
+  # ====================================================================
+  # OPA Server - Direct Metrics (if available)
+  # ====================================================================
+  - job_name: 'opa'
+    
+    scrape_interval: 15s
+    scrape_timeout: 5s
+    
+    metrics_path: '/metrics'
+    scheme: 'http'
+    
+    static_configs:
+      - targets:
+          - 'localhost:8181'
+        labels:
+          service: 'opa'
+          component: 'policy-engine'
+          environment: 'production'
+    
+    # Handle authentication if OPA requires bearer token
+    bearer_token: 'secret'  # Change to actual token
+    
+    # Optional: TLS configuration
+    # tls_config:
+    #   ca_file: /path/to/ca.crt
+    #   cert_file: /path/to/cert.crt
+    #   key_file: /path/to/key.key
+    #   insecure_skip_verify: false
+
+  # ====================================================================
+  # Redis - Optional Metrics
+  # ====================================================================
+  - job_name: 'redis'
+    
+    scrape_interval: 15s
+    scrape_timeout: 5s
+    
+    static_configs:
+      - targets:
+          - 'localhost:6380'
+        labels:
+          service: 'redis'
+          component: 'cache'
+          environment: 'production'
+    
+    # Redis exporter (if deployed)
+    # metrics_path: '/metrics'
+
+  # ====================================================================
+  # Prometheus Self-Monitoring
+  # ====================================================================
+  - job_name: 'prometheus'
+    
+    scrape_interval: 15s
+    scrape_timeout: 5s
+    
+    metrics_path: '/metrics'
+    scheme: 'http'
+    
+    static_configs:
+      - targets:
+          - 'localhost:9090'
+
+# ========================================================================
+# REMOTE STORAGE (Optional - for long-term storage)
+# ========================================================================
+#
+# remote_write:
+#   - url: "https://remote-storage.example.com/api/prom/write"
+#     basic_auth:
+#       username: 'prometheus'
+#       password: 'secret'
+#     write_relabel_configs:
+#       - source_labels: [__name__]
+#         regex: 'opa_.*'
+#         action: keep
+#
+# remote_read:
+#   - url: "https://remote-storage.example.com/api/prom/read"
+#     basic_auth:
+#       username: 'prometheus'
+#       password: 'secret'
+
+# ========================================================================
+# STORAGE CONFIGURATION
+# ========================================================================
+storage:
+  tsdb:
+    # Path to store TSDB data
+    path: /prometheus
+    
+    # Data retention size
+    retention_size: "500MB"
+    
+    # Data retention time (15 days)
+    retention_time: "360h"
+    
+    # Compression level for WAL (1-9)
+    wal_compression: true
+
+# ========================================================================
+# LOGGING CONFIGURATION
+# ========================================================================
+# Prometheus logs at info level by default
+# Use: --log.level=info|debug|warn|error
+
+# Example:
+# Start with: prometheus --log.level=debug --config.file=prometheus.yml

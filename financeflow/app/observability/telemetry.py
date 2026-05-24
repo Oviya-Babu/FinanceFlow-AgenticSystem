@@ -10,8 +10,6 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
-from prometheus_client import start_http_server
-
 from app.config.settings import config
 from app.config.logging import logger
 
@@ -26,6 +24,9 @@ def setup_observability() -> None:
     Sets up Jaeger exporter and auto-instrumentation for all subsystems.
     """
     global _tracer_provider, _tracer
+
+    if _tracer_provider is not None:
+        return
     
     if not config.opentelemetry.enabled:
         logger.info("OpenTelemetry disabled in configuration")
@@ -71,6 +72,8 @@ def setup_observability() -> None:
     # Setup Prometheus metrics exporter (if enabled)
     try:
         if config.prometheus.enabled:
+            from prometheus_client import start_http_server
+
             # Start Prometheus HTTP server
             start_http_server(port=config.prometheus.port, addr=config.prometheus.host)
             logger.info(
@@ -125,14 +128,12 @@ def get_tracer(name: str) -> trace.Tracer:
     Returns:
         Tracer instance
     """
-    if _tracer_provider is None:
-        setup_observability()
-    
     if _tracer_provider is not None:
         return _tracer_provider.get_tracer(name)
-    else:
-        # Return no-op tracer if disabled
-        return trace.get_tracer(name)
+
+    # Return a proxy tracer that becomes active once setup_observability()
+    # runs during application startup.
+    return trace.get_tracer(name)
 
 
 def get_meter(name: str):

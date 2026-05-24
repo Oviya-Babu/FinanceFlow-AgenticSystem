@@ -15,10 +15,60 @@ _collection = None
 _chroma_client = None
 
 
+def _vector_list(value):
+    return value.tolist() if hasattr(value, "tolist") else value
+
+
+class _FallbackModel:
+    def encode(self, texts):
+        vectors = []
+        for text in texts:
+            value = sum(ord(char) for char in text)
+            vectors.append([((value + offset * 31) % 997) / 997.0 for offset in range(8)])
+        return vectors
+
+
+class _FallbackCollection:
+    def __init__(self):
+        self._items = []
+
+    def count(self):
+        return len(self._items)
+
+    def add(self, embeddings, documents, metadatas, ids):
+        for index, item_id in enumerate(ids):
+            self._items.append(
+                {
+                    "id": item_id,
+                    "embedding": embeddings[index],
+                    "document": documents[index],
+                    "metadata": metadatas[index],
+                }
+            )
+
+    def query(self, query_embeddings, n_results, include=None):
+        if not self._items:
+            return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+
+        results = self._items[: max(1, n_results)]
+        return {
+            "ids": [[item["id"] for item in results]],
+            "documents": [[item["document"] for item in results]],
+            "metadatas": [[item["metadata"] for item in results]],
+            "distances": [[0.0 for _ in results]],
+        }
+
+
 def _get_model():
     global _model
     if _model is None:
-        from sentence_transformers import SentenceTransformer
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            logger.warning("sentence_transformers not installed — using fallback embeddings")
+            _model = _FallbackModel()
+            return _model
+
         logger.info("Loading SentenceTransformer model: %s", EMBEDDING_MODEL)
         _model = SentenceTransformer(EMBEDDING_MODEL)
         logger.info("SentenceTransformer model loaded.")
@@ -28,7 +78,13 @@ def _get_model():
 def _get_collection():
     global _collection, _chroma_client
     if _collection is None:
-        import chromadb
+        try:
+            import chromadb
+        except ImportError:
+            logger.warning("chromadb not installed — using in-memory fallback collection")
+            _collection = _FallbackCollection()
+            return _collection
+
         # Use EphemeralClient for in-process usage (chromadb 0.4+/0.5+)
         try:
             _chroma_client = chromadb.EphemeralClient()
@@ -57,7 +113,7 @@ def initialize(seed_entries: Optional[list] = None) -> None:
     model = _get_model()
 
     texts = [e["description"] for e in seed_entries]
-    embeddings = model.encode(texts).tolist()
+    embeddings = _vector_list(model.encode(texts))
     ids = [e["id"] for e in seed_entries]
     metadatas = [
         {
@@ -84,7 +140,7 @@ def query(text: str, top_k: int = RAG_TOP_K) -> List[dict]:
     try:
         col = _get_collection()
         model = _get_model()
-        embedding = model.encode([text]).tolist()
+        embedding = _vector_list(model.encode([text]))
         results = col.query(
             query_embeddings=embedding,
             n_results=min(top_k, col.count()),
@@ -110,7 +166,7 @@ def add_entry(entry: dict) -> None:
         col = _get_collection()
         model = _get_model()
         text = entry.get("description", entry.get("analyst_notes", str(entry)))
-        embedding = model.encode([text]).tolist()
+        embedding = _vector_list(model.encode([text]))
         entry_id = entry.get("id", f"analyst_{_uuid_mod.uuid4().hex[:8]}")
         col.add(
             embeddings=embedding,

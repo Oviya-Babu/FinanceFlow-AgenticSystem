@@ -1,0 +1,285 @@
+---
+# Kubernetes Network Policies for AgentGuard Security Mesh
+# Implements: Zero-trust networking, microsegmentation
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agentguard-deny-all
+  namespace: agentguard
+  labels:
+    security.level: critical
+    network.policy: default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  # Deny all by default
+---
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis-internal
+  namespace: agentguard
+  labels:
+    security.level: critical
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from gateway and OPA only
+    - from:
+        - podSelector:
+            matchLabels:
+              app: gateway
+        - podSelector:
+            matchLabels:
+              app: opa
+      ports:
+        - protocol: TCP
+          port: 6379
+  egress:
+    # DNS queries only
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+---
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-opa-internal
+  namespace: agentguard
+  labels:
+    security.level: critical
+spec:
+  podSelector:
+    matchLabels:
+      app: opa
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from gateway only
+    - from:
+        - podSelector:
+            matchLabels:
+              app: gateway
+      ports:
+        - protocol: TCP
+          port: 8181
+  egress:
+    # To Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # DNS queries
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+---
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-ingress
+  namespace: agentguard
+  labels:
+    security.level: critical
+spec:
+  podSelector:
+    matchLabels:
+      app: gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # External traffic (from Ingress)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    # To OPA
+    - to:
+        - podSelector:
+            matchLabels:
+              app: opa
+      ports:
+        - protocol: TCP
+          port: 8181
+    # To Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # DNS queries
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+    # External HTTPS (if needed)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+---
+
+# Pod Security Policy
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: agentguard-restricted
+  annotations:
+    seccomp.security.alpha.kubernetes.io/allowedProfileNames: 'runtime/default'
+    apparmor.security.beta.kubernetes.io/allowedProfileNames: 'runtime/default'
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  allowedCapabilities: []
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  runAsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  seLinux:
+    rule: 'MustRunAs'
+    seLinuxOptions:
+      level: "s0:c123,c456"
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  readOnlyRootFilesystem: true
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+
+---
+
+# Pod Security Policy Binding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agentguard-psp-restricted
+rules:
+  - apiGroups:
+      - policy
+    resources:
+      - podsecuritypolicies
+    verbs:
+      - use
+    resourceNames:
+      - agentguard-restricted
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agentguard-psp-restricted
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agentguard-psp-restricted
+subjects:
+  - kind: ServiceAccount
+    name: agentguard
+    namespace: agentguard
+
+---
+
+# RBAC - Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agentguard
+  namespace: agentguard
+  labels:
+    security.level: critical
+
+---
+
+# RBAC - Role (read-only)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agentguard-reader
+  namespace: agentguard
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+    resourceNames:
+      - agentguard-config
+      - agentguard-secrets
+
+---
+
+# RBAC - Role Binding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agentguard-reader
+  namespace: agentguard
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agentguard-reader
+subjects:
+  - kind: ServiceAccount
+    name: agentguard
+    namespace: agentguard
+
+---
+
+# Namespace SecurityPolicy
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentguard
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    security.level: critical

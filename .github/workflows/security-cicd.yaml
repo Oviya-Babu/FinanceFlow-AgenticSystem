@@ -1,0 +1,369 @@
+---
+# GitHub Actions CI/CD Security Pipeline
+# Implements: Automated security scanning, testing, and deployment
+
+name: AgentGuard Security CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Weekly security audit
+    - cron: '0 2 * * 0'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  SCAN_LEVEL: critical
+
+jobs:
+  # Job 1: Security Scanning
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    outputs:
+      redis-safe: ${{ steps.trivy-redis.outputs.safe }}
+      opa-safe: ${{ steps.trivy-opa.outputs.safe }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run security scan script
+        run: |
+          chmod +x ./scripts/security-scan.sh
+          ./scripts/security-scan.sh
+        env:
+          SCAN_LEVEL: ${{ env.SCAN_LEVEL }}
+          FAIL_ON_CRITICAL: true
+
+      - name: Upload scan results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-scan-results
+          path: security-scan-results/
+          retention-days: 30
+
+      - name: Scan Redis with Trivy
+        id: trivy-redis
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'image'
+          image-ref: 'redis:7-alpine'
+          format: 'json'
+          output: 'redis-trivy.json'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Scan OPA with Trivy
+        id: trivy-opa
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'image'
+          image-ref: 'openpolicyagent/opa:latest-static'
+          format: 'json'
+          output: 'opa-trivy.json'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Check for CRITICAL vulnerabilities
+        run: |
+          REDIS_CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' redis-trivy.json)
+          OPA_CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' opa-trivy.json)
+          
+          echo "Redis CRITICAL vulnerabilities: $REDIS_CRITICAL"
+          echo "OPA CRITICAL vulnerabilities: $OPA_CRITICAL"
+          
+          if [ "$REDIS_CRITICAL" -gt 0 ] || [ "$OPA_CRITICAL" -gt 0 ]; then
+            echo "❌ CRITICAL vulnerabilities found!"
+            exit 1
+          fi
+          echo "✅ No CRITICAL vulnerabilities"
+
+      - name: Upload Trivy scan results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # Job 2: Build Hardened Images
+  build-hardened-images:
+    needs: security-scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - dockerfile: docker/Dockerfile.redis-hardened
+            image: redis-hardened
+            context: ./docker
+          - dockerfile: docker/Dockerfile.opa-hardened
+            image: opa-hardened
+            context: ./docker
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.image }}
+        uses: docker/build-push-action@v4
+        with:
+          context: ${{ matrix.context }}
+          dockerfile: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.image }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.image }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            security.scanned=true
+
+      - name: Run Trivy on built image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.image }}:${{ github.sha }}
+          format: 'sarif'
+          output: '${{ matrix.image }}-trivy.sarif'
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: '${{ matrix.image }}-trivy.sarif'
+
+  # Job 3: Policy Testing
+  policy-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run OPA policy unit tests
+        run: |
+          python -m pytest tests/test_opa_policies.py -v --tb=short
+        continue-on-error: false
+
+      - name: Run determinism verification
+        run: |
+          python verify_determinism.py
+        continue-on-error: false
+
+      - name: Run security tests
+        run: |
+          python -m pytest tests/test_security*.py -v --tb=short
+        continue-on-error: false
+
+      - name: Generate test coverage report
+        run: |
+          python -m pytest tests/ --cov=app --cov=policies --cov-report=xml
+        continue-on-error: true
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+          flags: unittests
+
+  # Job 4: SAST (Static Application Security Testing)
+  sast-scanning:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run Bandit (Python security)
+        uses: gaurav-nelson/github-action-bandit@master
+        with:
+          path: "app/"
+          continue-on-error: true
+
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@v1
+        continue-on-error: true
+
+  # Job 5: Dependency Scanning
+  dependency-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run pip-audit
+        run: |
+          pip install pip-audit
+          pip-audit --desc --format markdown > pip-audit-report.md
+        continue-on-error: true
+
+      - name: Upload dependency check results
+        uses: actions/upload-artifact@v3
+        with:
+          name: dependency-check-results
+          path: pip-audit-report.md
+
+  # Job 6: Infrastructure as Code (IaC) Scanning
+  iac-scanning:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Scan Kubernetes manifests with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: 'k8s/'
+          format: 'sarif'
+          output: 'trivy-k8s.sarif'
+
+      - name: Upload IaC scan results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-k8s.sarif'
+
+      - name: Scan Docker Compose with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: 'docker-compose-hardened.yaml'
+          format: 'sarif'
+          output: 'trivy-compose.sarif'
+
+  # Job 7: Deployment (only on main branch)
+  deploy:
+    needs: [security-scan, build-hardened-images, policy-tests, sast-scanning, dependency-check, iac-scanning]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Deploy to Kubernetes
+        env:
+          KUBECONFIG: ${{ secrets.KUBECONFIG }}
+        run: |
+          # Verify security policies before deployment
+          kubectl apply -f k8s/network-policies.yaml --dry-run=client
+          
+          # Apply secrets
+          kubectl apply -f k8s/secrets.yaml
+          
+          # Deploy hardened services
+          kubectl set image deployment/redis redis=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/redis-hardened:${{ github.sha }}
+          kubectl set image deployment/opa opa=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/opa-hardened:${{ github.sha }}
+          
+          # Wait for rollout
+          kubectl rollout status deployment/redis
+          kubectl rollout status deployment/opa
+
+      - name: Verify deployment security
+        run: |
+          # Check for root containers
+          kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.securityContext}{"\n"}{end}'
+          
+          # Verify network policies
+          kubectl get networkpolicies -n agentguard
+          
+          # Check pod security policies
+          kubectl get psp agentguard-restricted
+
+  # Job 8: Post-Deployment Verification
+  post-deployment-verification:
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run security tests on deployed system
+        run: |
+          # Health checks
+          curl -f http://$GATEWAY_URL/health || exit 1
+          curl -f http://$OPA_URL:8181/health || exit 1
+          
+          # Security header verification
+          curl -I http://$GATEWAY_URL/ | grep -i "x-frame-options"
+          curl -I http://$GATEWAY_URL/ | grep -i "x-content-type-options"
+          
+          # Policy evaluation test
+          python tests/test_opa_integration.py
+        env:
+          GATEWAY_URL: ${{ secrets.GATEWAY_URL }}
+          OPA_URL: ${{ secrets.OPA_URL }}
+
+  # Job 9: Security Report
+  security-report:
+    needs: [security-scan, sast-scanning, dependency-check, iac-scanning]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Download all scan results
+        uses: actions/download-artifact@v3
+
+      - name: Generate security report
+        run: |
+          echo "# Security Scan Report" > security-report.md
+          echo "Generated: $(date)" >> security-report.md
+          echo "" >> security-report.md
+          
+          # Include all scan results
+          find . -name "*scan*" -type f | xargs -I {} echo "- {}" >> security-report.md
+
+      - name: Post report as PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('security-report.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
+
+      - name: Upload final report
+        uses: actions/upload-artifact@v3
+        with:
+          name: final-security-report
+          path: security-report.md
+          retention-days: 90

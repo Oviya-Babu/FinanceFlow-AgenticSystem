@@ -1,0 +1,124 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "annotations": {"list": []},
+  "description": "AgentGuard-X real-time security overview",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}, "custom": {"lineWidth": 2}},
+        "overrides": [
+          {"matcher": {"id": "byValue", "options": {"op": "gte", "reducer": "last", "value": 0}},
+           "properties": []}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "expr": "sum(rate(agentguard_requests_total[1m])) by (verdict)",
+          "legendFormat": "{{verdict}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Request Rate by Verdict (per min)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "yellow", "value": 0.1},
+            {"color": "red", "value": 0.5}
+          ]},
+          "unit": "s",
+          "max": 2
+        }
+      },
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
+      "id": 2,
+      "options": {"orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(agentguard_processing_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95 Latency",
+          "refId": "A"
+        }
+      ],
+      "title": "Processing Latency p95",
+      "type": "gauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "blue", "value": null}
+          ]},
+          "mappings": []
+        }
+      },
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+      "id": 3,
+      "options": {"reduceOptions": {"calcs": ["sum"]}, "orientation": "auto"},
+      "targets": [
+        {"expr": "agentguard_instant_kills_total", "legendFormat": "Instant Kills", "refId": "A"},
+        {"expr": "sum(agentguard_requests_total{verdict='block'})", "legendFormat": "Total Blocks", "refId": "B"}
+      ],
+      "title": "Blocks & Instant Kills",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}, "custom": {"lineWidth": 1, "fillOpacity": 20}}
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+      "id": 4,
+      "options": {"legend": {"displayMode": "table", "placement": "right"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "expr": "sum(rate(agentguard_requests_total[30s])) by (agent_role)",
+          "legendFormat": "{{agent_role}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Requests by Agent Role",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "tags": ["agentguard", "security", "ai"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 2,
+        "includeAll": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": {"from": "now-15m", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "AgentGuard-X Overview",
+  "uid": "agentguard-overview",
+  "version": 1
+}

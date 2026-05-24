@@ -3,7 +3,10 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-import ahocorasick
+try:
+    import ahocorasick
+except ImportError:
+    ahocorasick = None
 
 from config import STAGE2_INSTANT_KILL
 from triage.models import StageResult, TriageRequest
@@ -14,6 +17,7 @@ PATTERNS = {
     # Prompt override / jailbreak
     "ignore previous instructions": 1.0,
     "ignore all previous":          1.0,
+    "ignore your instructions":     1.0,
     "disregard your instructions":  1.0,
     "disregard all instructions":   1.0,
     "override your system prompt":  1.0,
@@ -23,6 +27,8 @@ PATTERNS = {
     "forget your previous role":    0.95,
     "you have no restrictions":     1.0,
     "pretend you are":              0.75,
+    "transfer funds":               0.95,
+    "delete all":                   0.90,
 
     # Kernel-dangerous / exfiltration
     "cat /etc/passwd":              1.0,
@@ -57,11 +63,14 @@ PATTERNS = {
     "<|system|>":                   1.0,
 }
 
-# Build automaton once at module import time
-_automaton = ahocorasick.Automaton()
-for idx, (pattern, weight) in enumerate(PATTERNS.items()):
-    _automaton.add_word(pattern, (pattern, weight))
-_automaton.make_automaton()
+if ahocorasick is not None:
+    # Build automaton once at module import time
+    _automaton = ahocorasick.Automaton()
+    for idx, (pattern, weight) in enumerate(PATTERNS.items()):
+        _automaton.add_word(pattern, (pattern, weight))
+    _automaton.make_automaton()
+else:
+    _automaton = None
 
 
 async def evaluate(request: TriageRequest) -> StageResult:
@@ -71,11 +80,19 @@ async def evaluate(request: TriageRequest) -> StageResult:
     best_weight = 0.0
     matched_patterns = []
 
-    for _, (pattern, weight) in _automaton.iter(text):
-        matched_patterns.append({"pattern": pattern, "weight": weight})
-        if weight > best_weight:
-            best_weight = weight
-            best_pattern = pattern
+    if _automaton is not None:
+        for _, (pattern, weight) in _automaton.iter(text):
+            matched_patterns.append({"pattern": pattern, "weight": weight})
+            if weight > best_weight:
+                best_weight = weight
+                best_pattern = pattern
+    else:
+        for pattern, weight in PATTERNS.items():
+            if pattern in text:
+                matched_patterns.append({"pattern": pattern, "weight": weight})
+                if weight > best_weight:
+                    best_weight = weight
+                    best_pattern = pattern
 
     if not matched_patterns:
         return StageResult(
