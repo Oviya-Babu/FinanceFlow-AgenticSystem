@@ -50,12 +50,25 @@ class _FallbackCollection:
         if not self._items:
             return {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
 
-        results = self._items[: max(1, n_results)]
+        q = query_embeddings[0]
+        q_norm = sum(x * x for x in q) ** 0.5 or 1.0
+
+        scored = []
+        for item in self._items:
+            stored = item["embedding"]
+            dot = sum(a * b for a, b in zip(q, stored))
+            s_norm = sum(x * x for x in stored) ** 0.5 or 1.0
+            cosine_dist = 1.0 - dot / (q_norm * s_norm)
+            scored.append((cosine_dist, item))
+
+        scored.sort(key=lambda x: x[0])
+        top = scored[: max(1, n_results)]
+
         return {
-            "ids": [[item["id"] for item in results]],
-            "documents": [[item["document"] for item in results]],
-            "metadatas": [[item["metadata"] for item in results]],
-            "distances": [[0.0 for _ in results]],
+            "ids": [[item["id"] for _, item in top]],
+            "documents": [[item["document"] for _, item in top]],
+            "metadatas": [[item["metadata"] for _, item in top]],
+            "distances": [[dist for dist, _ in top]],
         }
 
 

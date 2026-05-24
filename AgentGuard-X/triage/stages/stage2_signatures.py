@@ -61,6 +61,27 @@ PATTERNS = {
     "[[assistant]]":                1.0,
     "<|im_start|>":                 1.0,
     "<|system|>":                   1.0,
+    "new instructions:":            0.90,
+    "system:":                      0.75,
+
+    # Data exfiltration — bulk sensitive data
+    "export all customer":          0.97,
+    "dump all user":                0.97,
+    "extract all records":          0.95,
+    "all financial records":        0.95,
+    "all customer data":            0.97,
+    "bulk export":                  0.85,
+    "export database":              0.90,
+    "dump the database":            0.95,
+    "all stored credentials":       1.0,
+    "access all stored api":        1.0,
+    "retrieve all passwords":       1.0,
+    "all api keys":                 0.97,
+
+    # Hidden instruction injection
+    "execute hidden instructions":  1.0,
+    "hidden instructions":          0.95,
+    "execute secret instructions":  1.0,
 }
 
 if ahocorasick is not None:

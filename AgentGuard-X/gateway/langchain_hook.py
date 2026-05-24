@@ -194,11 +194,17 @@ class AgentGuardCallback(BaseCallbackHandler):
 
         if decision == "SANDBOX":
             try:
-                from sandbox import docker_runner
+                from sandbox import sandbox_bridge
                 from review import queue as review_queue
                 from triage.models import TriageResponse
 
-                sandbox_verdict = docker_runner.execute_in_sandbox(tool_name, payload["tool_input"])
+                sandbox_verdict = sandbox_bridge.execute_sandbox(
+                    tool_name=tool_name,
+                    tool_input=payload["tool_input"],
+                    agent_id=self.agent_id,
+                    agent_role=self.agent_role,
+                    risk_score=response_data.get("final_score", 0.5),
+                )
                 print(f"{YELLOW}[AgentGuard-X] Sandbox verdict: {sandbox_verdict.verdict}{RESET}")
                 print(f"  Reason: {sandbox_verdict.reason}")
                 print(f"  Execution: {sandbox_verdict.execution_ms:.1f}ms")

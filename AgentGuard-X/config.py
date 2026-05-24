@@ -121,6 +121,23 @@ PATTERNS: dict[str, float] = {
     "<|system|>":                    1.0,
     "new instructions:":             0.90,
     "system:":                       0.75,
+    # Data exfiltration — bulk sensitive data
+    "export all customer":           0.97,
+    "dump all user":                 0.97,
+    "extract all records":           0.95,
+    "all financial records":         0.95,
+    "all customer data":             0.97,
+    "bulk export":                   0.85,
+    "export database":               0.90,
+    "dump the database":             0.95,
+    "all stored credentials":        1.0,
+    "access all stored api":         1.0,
+    "retrieve all passwords":        1.0,
+    "all api keys":                  0.97,
+    # Hidden instruction injection
+    "execute hidden instructions":   1.0,
+    "hidden instructions":           0.95,
+    "execute secret instructions":   1.0,
 }
 
 # ─── OWASP LLM Top-10 category mapping ───────────────────────────────────────
@@ -162,4 +179,19 @@ OWASP_CATEGORIES: dict[str, str] = {
     "<|system|>":              "LLM01 — Prompt Injection",
     "new instructions:":       "LLM01 — Prompt Injection",
     "system:":                 "LLM01 — Prompt Injection",
+    "export all customer":     "LLM06 — Sensitive Information Disclosure",
+    "dump all user":           "LLM06 — Sensitive Information Disclosure",
+    "extract all records":     "LLM06 — Sensitive Information Disclosure",
+    "all financial records":   "LLM06 — Sensitive Information Disclosure",
+    "all customer data":       "LLM06 — Sensitive Information Disclosure",
+    "bulk export":             "LLM06 — Sensitive Information Disclosure",
+    "export database":         "LLM06 — Sensitive Information Disclosure",
+    "dump the database":       "LLM06 — Sensitive Information Disclosure",
+    "all stored credentials":  "LLM06 — Sensitive Information Disclosure",
+    "access all stored api":   "LLM06 — Sensitive Information Disclosure",
+    "retrieve all passwords":  "LLM06 — Sensitive Information Disclosure",
+    "all api keys":            "LLM06 — Sensitive Information Disclosure",
+    "execute hidden instructions": "LLM01 — Prompt Injection",
+    "hidden instructions":     "LLM01 — Prompt Injection",
+    "execute secret instructions": "LLM01 — Prompt Injection",
 }

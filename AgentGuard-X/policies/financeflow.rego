@@ -1,21 +1,21 @@
 package agentguard.authz
 
 # ---------------------------------------------------------------------------
-# FinanceFlow agent/tool permission matrix
+# FinanceFlow agent/tool permission matrix (RBAC via OPA)
 #
 # Stage 3 (stage3_policy.py) reads:
 #   result.allow          (bool)
-#   result.violation_type (string, used to look up score in VIOLATION_SCORES)
+#   result.violation_type (string)
 #   result.reason         (string, human-readable)
-#
-# VIOLATION_SCORES in stage3_policy.py:
-#   "tool_not_permitted"     → 0.90  (BLOCK zone)
-#   "rate_limit_exceeded"    → 0.60  (SANDBOX zone)
-#   "resource_scope_violation" → 0.75 (BLOCK zone)
 # ---------------------------------------------------------------------------
 
-# Per-role tool allow-lists
+# Per-role tool allow-lists — must match agent_role values in REGISTERED_AGENTS
 _allowed_tools := {
+    "orchestrator_agent": {
+        "delegate_task",
+        "spawn_agent",
+        "task_scheduler",
+    },
     "orchestrator": {
         "delegate_task",
         "spawn_agent",
@@ -23,21 +23,37 @@ _allowed_tools := {
     },
     "research_agent": {
         "web_search",
-        "scrape_webpage",
         "read_pdf",
+        "read_file",
+        "scrape_webpage",
         "summarize_document",
+        "financial_search",
+        "sec_filings",
+        "llm_answer",
     },
     "analyst_agent": {
         "query_internal_db",
+        "write_report",
         "generate_summary",
         "create_financial_model",
-        "write_report",
+        "generate_pdf",
+        "llm_answer",
     },
     "report_agent": {
+        "write_report",
+        "send_email",
         "format_report",
         "export_pdf",
         "publish_report",
-        "send_email",
+    },
+    "data_agent": {
+        "read_file",
+        "http_post",
+    },
+    "admin_agent": {
+        "web_search", "read_file", "http_post",
+        "execute_shell", "query_internal_db",
+        "write_report", "send_email", "spawn_agent",
     },
 }
 
@@ -67,7 +83,7 @@ allow if {
 }
 
 # ---------------------------------------------------------------------------
-# violation_type — mutually exclusive branches, no rule conflicts
+# violation_type — mutually exclusive branches
 # ---------------------------------------------------------------------------
 
 default violation_type := ""
