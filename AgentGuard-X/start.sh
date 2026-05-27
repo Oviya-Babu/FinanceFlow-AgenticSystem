@@ -27,7 +27,10 @@ curl -s http://localhost:8181/health | python3 -c "import sys,json; d=json.load(
 # 3. Start Ollama (if not already running)
 echo "[3/7] Starting Ollama..."
 if ! pgrep -x ollama > /dev/null 2>&1; then
-    ollama serve > /tmp/ollama.log 2>&1 &
+    # FIX: OLLAMA_HOST=127.0.0.1:11434 restricts the inference API to
+    # localhost only.  Without this, `ollama serve` binds to 0.0.0.0:11434
+    # and exposes model listing / text generation to every network interface.
+    OLLAMA_HOST=127.0.0.1:11434 ollama serve > /tmp/ollama.log 2>&1 &
     OLLAMA_PID=$!
     echo "Ollama PID: $OLLAMA_PID"
     sleep 3
@@ -53,7 +56,9 @@ fi
 echo "[5/7] Starting AgentGuard-X Triage Engine..."
 pkill -f "uvicorn triage.main:app" 2>/dev/null || true
 sleep 0.5
-uvicorn triage.main:app --host 0.0.0.0 --port 8002 --reload > /tmp/agentguard.log 2>&1 &
+# FIX: --host 127.0.0.1 — triage engine is an internal service; there is
+# no reason it should be reachable from outside the local machine.
+uvicorn triage.main:app --host 127.0.0.1 --port 8002 --reload > /tmp/agentguard.log 2>&1 &
 TRIAGE_PID=$!
 echo "Triage Engine PID: $TRIAGE_PID"
 echo "Waiting for startup (model loading takes ~15-20s)..."

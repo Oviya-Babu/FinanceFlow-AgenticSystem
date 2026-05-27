@@ -45,13 +45,17 @@ else
     echo "    Ollama already installed: $(ollama --version 2>/dev/null || true)"
 fi
 
-echo "    Starting Ollama daemon..."
-ollama serve > /tmp/ollama-setup.log 2>&1 &
+echo "    Starting Ollama daemon (localhost-only)..."
+# FIX: OLLAMA_HOST=127.0.0.1:11434 restricts Ollama to localhost.
+# Without this env var, Ollama defaults to 0.0.0.0:11434 and exposes
+# the model inference API to every interface on the machine.
+OLLAMA_HOST=127.0.0.1:11434 ollama serve > /tmp/ollama-setup.log 2>&1 &
 OLLAMA_PID=$!
 sleep 4  # give the daemon time to start
 
 echo "    Pulling model llama3.2:3b (this may take a few minutes)..."
-ollama pull llama3.2:3b || echo "    WARNING: model pull failed — run 'ollama pull llama3.2:3b' manually"
+OLLAMA_HOST=127.0.0.1:11434 ollama pull llama3.2:3b \
+    || echo "    WARNING: model pull failed — run 'OLLAMA_HOST=127.0.0.1:11434 ollama pull llama3.2:3b' manually"
 
 kill $OLLAMA_PID 2>/dev/null || true
 

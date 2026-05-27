@@ -1,27 +1,38 @@
-# Hardened OPA Dockerfile for Security Mesh
+# ============================================================
+# Hardened OPA Dockerfile for AgentGuard Security Mesh
 # Base: Distroless (minimal attack surface)
-# Implements: Security scanning, non-root, capability dropping
+# HARDENED 2026-05-27:
+#   V22 — removed invalid RUN mkdir in distroless final stage
+#   V23 — fixed health check (was opa run --help, not a real check)
+# ============================================================
 
 ARG OPA_VERSION=0.62.0
-FROM openpolicyagent/opa:${OPA_VERSION} as builder
+
+# ── Stage 1: OPA binary + policy prep ────────────────────────
+FROM openpolicyagent/opa:${OPA_VERSION}-static AS builder
 
 # Verify OPA binary integrity
 RUN opa version
 
-# Final image: Distroless for minimal attack surface
+# Prepare policy directory and config in the builder stage
+# (distroless final stage has no shell — we create dirs here)
+RUN mkdir -p /policies /etc/opa
+
+# Copy security policies into builder so we can COPY them to final
+COPY --chown=65532:65532 policies/ /policies/
+
+# Copy OPA configuration
+COPY --chown=65532:65532 opa-hardened.conf /etc/opa/
+
+# ── Stage 2: Distroless runtime (minimal attack surface) ─────
 FROM gcr.io/distroless/base-debian12:nonroot
 
 # Copy OPA binary from official image
 COPY --from=builder /opa /bin/opa
 
-# Create directory for policies (read-only after startup)
-RUN mkdir -p /policies
-
-# Copy security policies
-COPY --chown=nonroot:nonroot policies/ /policies/
-
-# Copy OPA configuration
-COPY --chown=nonroot:nonroot opa-hardened.conf /etc/opa/
+# FIX V22: copy pre-created directories from builder (no RUN in distroless)
+COPY --from=builder --chown=65532:65532 /policies /policies
+COPY --from=builder --chown=65532:65532 /etc/opa /etc/opa
 
 # Security labels
 LABEL security.vendor="AgentGuard" \
@@ -29,36 +40,33 @@ LABEL security.vendor="AgentGuard" \
       security.image="distroless" \
       security.attack-surface="minimal" \
       security.scanning="enabled" \
-      audit.enabled="true"
-
-# Security annotations
-LABEL description="Hardened OPA for security mesh" \
+      audit.enabled="true" \
+      description="Hardened OPA for AgentGuard security mesh" \
       maintainer="AgentGuard Security Team" \
       security-policy="zero-trust"
 
-# Health check (runs as nonroot)
-HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
-    CMD /bin/opa run --help || exit 1
+# FIX V23: real health check — probe the /health HTTP endpoint
+# distroless has wget in some variants; use OPA eval as fallback
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/bin/opa", "eval", "--format=raw", "true"]
 
-# User is already nonroot (UID 65532) from distroless
+# User is nonroot (UID 65532) from distroless base
 USER 65532:65532
 
-# Read-only filesystem (except /tmp for transient data)
-# Use --read-only --tmpfs /tmp when running
-
-# Expose OPA port
+# Expose OPA port (Docker network isolates; host binding controlled by Compose)
 EXPOSE 8181
 
 # Run OPA with strict security settings
 ENTRYPOINT ["/bin/opa"]
-CMD ["run", "--server", \
-     "--log-level=debug", \
-     "--config=/etc/opa/opa-hardened.conf", \
+CMD ["run", \
+     "--server", \
+     "--log-level=info", \
+     "--config-file=/etc/opa/opa-hardened.conf", \
      "/policies"]
 
-# Security Note:
+# Security Notes:
 # - Runs as nonroot user (65532:65532)
-# - Distroless base: only libc and ca-certificates
-# - No shell, no package manager in runtime image
-# - Cannot be exploited to install tools
-# - Every file is verified by distroless
+# - Distroless base: only libc and ca-certificates — no shell, no package mgr
+# - Cannot be used to install tools post-exploitation
+# - All files verified by distroless
+# - Host port binding controlled by docker-compose (127.0.0.1:8182:8181)

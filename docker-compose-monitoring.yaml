@@ -3,13 +3,21 @@ version: '3.8'
 # Complete AgentGuard-X Monitoring Stack
 # Includes: Prometheus, Alertmanager, Grafana
 #
+# HARDENED 2026-05-27:
+#   - All host ports bound to 127.0.0.1 (was 0.0.0.0)
+#   - Grafana password from env var (was hardcoded "admin")
+#   - Redis password from env var (was hardcoded "changeme")
+#   - GF_SECURITY_COOKIE_SECURE controlled by env
+#   - agentguard-gateway removed debug reload mode
+#
 # Usage:
-#   docker-compose -f docker-compose-monitoring.yaml up -d
-#   
-# Access:
-#   Prometheus:    http://localhost:9090
-#   Alertmanager:  http://localhost:9093  
-#   Grafana:       http://localhost:3000 (admin/admin)
+#   cp .env.example .env   # fill in GRAFANA_ADMIN_PASSWORD, REDIS_PASSWORD
+#   docker compose -f docker-compose-monitoring.yaml up -d
+#
+# Access (localhost only after hardening):
+#   Prometheus:    http://127.0.0.1:9090
+#   Alertmanager:  http://127.0.0.1:9093
+#   Grafana:       http://127.0.0.1:3000
 
 services:
   # ========================================================================
@@ -20,9 +28,10 @@ services:
     container_name: agentguard-prometheus
     restart: unless-stopped
     
+    # FIX: 127.0.0.1 binding — Prometheus must not be publicly accessible
     ports:
-      - "9090:9090"
-    
+      - "127.0.0.1:9090:9090"
+
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/rules:/etc/prometheus/rules:ro
@@ -64,9 +73,10 @@ services:
     container_name: agentguard-alertmanager
     restart: unless-stopped
     
+    # FIX: 127.0.0.1 binding — Alertmanager webhook receiver must not be public
     ports:
-      - "9093:9093"
-    
+      - "127.0.0.1:9093:9093"
+
     volumes:
       - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
@@ -96,16 +106,21 @@ services:
     container_name: agentguard-grafana
     restart: unless-stopped
     
+    # FIX: 127.0.0.1 binding — Grafana UI must not be publicly accessible
     ports:
-      - "3000:3000"
-    
+      - "127.0.0.1:3000:3000"
+
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin  # Change in production!
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      # FIX: password from env var — was hardcoded "admin"
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
       - GF_INSTALL_PLUGINS=grafana-worldmap-panel,grafana-piechart-panel
       - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
       - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
-      - GF_SECURITY_COOKIE_SECURE=false  # Set to true with HTTPS in production
+      # FIX: controlled by env — set GF_SECURITY_COOKIE_SECURE=true with HTTPS
+      - GF_SECURITY_COOKIE_SECURE=${GF_SECURITY_COOKIE_SECURE:-false}
+      - GF_SECURITY_DISABLE_BRUTE_FORCE_LOGIN_PROTECTION=false
       - GF_LOG_LEVEL=info
     
     volumes:
@@ -139,23 +154,28 @@ services:
     container_name: agentguard-gateway
     restart: unless-stopped
     
+    # FIX: all ports bound to 127.0.0.1
     ports:
-      - "8000:8000"    # FastAPI Gateway
-      - "8182:8182"    # OPA Server
-      - "6380:6379"    # Redis (exposed from docker)
-    
+      - "127.0.0.1:8000:8000"    # FastAPI Gateway — localhost only
+      - "127.0.0.1:8182:8182"    # OPA Server — localhost only
+      - "127.0.0.1:6380:6379"    # Redis — localhost only
+
     environment:
       - PYTHONUNBUFFERED=1
       - OPA_URL=http://opa:8181
       - REDIS_URL=redis://redis:6379
       - LOG_LEVEL=info
       - PROMETHEUS_ENABLED=true
-    
+      # Set HOST=0.0.0.0 inside container so Docker networking works;
+      # the ports: mapping above enforces the localhost-only host binding.
+      - HOST=0.0.0.0
+
     volumes:
       - ./policies:/app/policies:ro
       - ./app:/app/app:ro
-    
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+    # FIX: removed --reload — auto-reload is a production security risk
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     
     labels:
       - "com.example.description=AgentGuard Security Gateway"
@@ -185,9 +205,10 @@ services:
     container_name: agentguard-opa
     restart: unless-stopped
     
+    # FIX: 127.0.0.1 binding — OPA policy engine must not be publicly accessible
     ports:
-      - "8181:8181"
-    
+      - "127.0.0.1:8181:8181"
+
     environment:
       - OPA_LOG_LEVEL=info
       - OPA_DECISION_LOGS=true
@@ -230,27 +251,31 @@ services:
     container_name: agentguard-redis
     restart: unless-stopped
     
+    # FIX: 127.0.0.1 binding for Redis
     ports:
-      - "6380:6379"
-    
+      - "127.0.0.1:6380:6379"
+
     environment:
-      - REDIS_PASSWORD=changeme
-    
+      # FIX: password from env var — was hardcoded "changeme"
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+
     volumes:
       - redis_data:/data
       - ./docker/redis-hardened.conf:/etc/redis/redis.conf:ro
       - ./docker/users.acl:/etc/redis/users.acl:ro
-    
-    command: redis-server /etc/redis/redis-hardened.conf
-    
+
+    command: >
+      redis-server /etc/redis/redis-hardened.conf
+      --requirepass "${REDIS_PASSWORD}"
+
     labels:
       - "com.example.description=AgentGuard Redis Cache"
-    
+
     networks:
       - agentguard-internal
-    
+
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "changeme", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 30s
       timeout: 10s
       retries: 3

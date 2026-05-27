@@ -45,10 +45,15 @@ if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
 else
     echo "[+] Starting Ollama..."
     docker rm -f financeflow-ollama >/dev/null 2>&1 || true
+    # FIX: -p 127.0.0.1:11434:11434 so Ollama is only reachable from localhost.
+    # Previously -p 11434:11434 bound to 0.0.0.0 and exposed the inference
+    # API (model listing, text generation) to every network interface.
     docker run -d \
         --name financeflow-ollama \
         --restart unless-stopped \
-        -p 11434:11434 \
+        -p 127.0.0.1:11434:11434 \
+        --cap-drop ALL \
+        --security-opt no-new-privileges:true \
         -v ollama_data:/root/.ollama \
         ollama/ollama:0.1.32
     sleep 5

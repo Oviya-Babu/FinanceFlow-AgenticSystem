@@ -9,7 +9,7 @@ on:
   pull_request:
     branches: [ main, develop ]
   schedule:
-    # Weekly security audit
+    # Weekly security audit — Sunday 02:00 UTC
     - cron: '0 2 * * 0'
 env:
   REGISTRY: ghcr.io
@@ -17,8 +17,11 @@ env:
   SCAN_LEVEL: critical
 
 jobs:
+  # ─────────────────────────────────────────────────────────────────
   # Job 1: Security Scanning
+  # ─────────────────────────────────────────────────────────────────
   security-scan:
+    name: Security Scan
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -26,6 +29,7 @@ jobs:
     outputs:
       redis-safe: ${{ steps.trivy-redis.outputs.safe }}
       opa-safe: ${{ steps.trivy-opa.outputs.safe }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -36,7 +40,9 @@ jobs:
           ./scripts/security-scan.sh
         env:
           SCAN_LEVEL: ${{ env.SCAN_LEVEL }}
-          FAIL_ON_CRITICAL: true
+          # NOTE: FAIL_ON_CRITICAL is false here; real vuln gating done via
+          #       structured Trivy JSON output below (V03 fix)
+          FAIL_ON_CRITICAL: "false"
 
       - name: Upload scan results
         uses: actions/upload-artifact@v4
@@ -46,27 +52,43 @@ jobs:
           path: security-scan-results/
           retention-days: 30
 
-      - name: Scan Redis with Trivy
+      # ── Trivy image scans (JSON for counting, SARIF for upload) ──
+      - name: Scan Redis with Trivy (JSON)
         id: trivy-redis
-        uses: aquasecurity/trivy-action@master
+        # FIX V13: pin to specific version, not @master
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: 'image'
           image-ref: 'redis:7-alpine'
           format: 'json'
           output: 'redis-trivy.json'
           severity: 'CRITICAL,HIGH'
+          exit-code: '0'
 
-      - name: Scan OPA with Trivy
+      - name: Scan OPA with Trivy (JSON)
         id: trivy-opa
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: 'image'
-          image-ref: 'openpolicyagent/opa:latest-static'
+          image-ref: 'openpolicyagent/opa:0.62.0-static'
           format: 'json'
           output: 'opa-trivy.json'
           severity: 'CRITICAL,HIGH'
+          exit-code: '0'
 
-      - name: Check for CRITICAL vulnerabilities
+      # FIX V02: generate trivy-results.sarif BEFORE trying to upload it
+      - name: Generate combined SARIF for Security tab
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+
+      # FIX V03: count vulnerabilities from structured JSON, not grep-on-text
+      - name: Check for CRITICAL vulnerabilities (structured)
         run: |
           REDIS_CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' redis-trivy.json 2>/dev/null || echo 0)
           OPA_CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' opa-trivy.json 2>/dev/null || echo 0)
@@ -85,9 +107,13 @@ jobs:
         continue-on-error: true
         with:
           sarif_file: 'trivy-results.sarif'
+          category: 'trivy-filesystem'
 
+  # ─────────────────────────────────────────────────────────────────
   # Job 2: Build Hardened Images
+  # ─────────────────────────────────────────────────────────────────
   build-hardened-images:
+    name: Build Hardened Images
     needs: security-scan
     runs-on: ubuntu-latest
     permissions:
@@ -102,15 +128,18 @@ jobs:
           - dockerfile: docker/Dockerfile.opa-hardened
             image: opa-hardened
             context: ./docker
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # FIX V14: docker/setup-buildx-action @v2 → @v3
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
+      # FIX V15: docker/login-action @v2 → @v3
       - name: Log in to Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -130,27 +159,31 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             security.scanned=true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Run Trivy on built image
         uses: aquasecurity/trivy-action@master
         if: always()
         continue-on-error: true
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.image }}:${{ github.sha }}
+          image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.image }}:${{ github.sha }}'
           format: 'sarif'
           output: '${{ matrix.image }}-trivy.sarif'
 
   # Job 3: Policy Testing
   policy-tests:
+    name: Policy Tests
     runs-on: ubuntu-latest
     permissions:
       contents: read
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
@@ -182,12 +215,16 @@ jobs:
           files: ./coverage.xml
           flags: unittests
 
-  # Job 4: SAST (Static Application Security Testing)
+  # ─────────────────────────────────────────────────────────────────
+  # Job 4: SAST — Static Application Security Testing
+  # ─────────────────────────────────────────────────────────────────
   sast-scanning:
+    name: SAST Scanning
     runs-on: ubuntu-latest
     permissions:
       contents: read
       security-events: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -203,8 +240,17 @@ jobs:
           bandit -r app/ -f json -o bandit-report.json || true
         continue-on-error: true
 
-      - name: Run Semgrep
-        uses: returntocorp/semgrep-action@v1
+      # FIX V16: semgrep-action@v1 deprecated — use direct CLI install
+      - name: Run Semgrep (CLI)
+        run: |
+          pip install --quiet semgrep
+          semgrep --config=auto \
+            --json \
+            --output semgrep-report.json \
+            app/ financeflow/ AgentGuard-X/ \
+            --exclude '.venv' --exclude 'venv' \
+            || true
+          echo "✅ Semgrep scan complete"
         continue-on-error: true
 
       - name: Upload Bandit results
@@ -216,11 +262,14 @@ jobs:
           path: bandit-report.json
 
   # Job 5: Dependency Scanning
+  # ─────────────────────────────────────────────────────────────────
   dependency-check:
+    name: Dependency Check
     runs-on: ubuntu-latest
     permissions:
       contents: read
       security-events: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -242,14 +291,21 @@ jobs:
         continue-on-error: true
         with:
           name: dependency-check-results
-          path: pip-audit-report.md
+          path: |
+            pip-audit-report.md
+            safety-report.txt
+            sbom.spdx.json
 
+  # ─────────────────────────────────────────────────────────────────
   # Job 6: Infrastructure as Code (IaC) Scanning
+  # ─────────────────────────────────────────────────────────────────
   iac-scanning:
+    name: IaC Scanning
     runs-on: ubuntu-latest
     permissions:
       contents: read
       security-events: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -273,15 +329,34 @@ jobs:
           scan-ref: '.'
           format: 'sarif'
           output: 'trivy-compose.sarif'
+          exit-code: '0'
 
-  # Job 7: Deployment (only on main branch)
+      - name: Upload Compose IaC SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('trivy-compose.sarif') != ''
+        continue-on-error: true
+        with:
+          sarif_file: 'trivy-compose.sarif'
+          category: 'trivy-compose'
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 7: Deploy (main branch only)
+  # ─────────────────────────────────────────────────────────────────
   deploy:
-    needs: [security-scan, build-hardened-images, policy-tests, sast-scanning, dependency-check, iac-scanning]
+    name: Deploy
+    needs:
+      - security-scan
+      - build-hardened-images
+      - policy-tests
+      - sast-scanning
+      - dependency-check
+      - iac-scanning
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: read
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -293,10 +368,13 @@ jobs:
         continue-on-error: true
 
   # Job 8: Post-Deployment Verification
+  # ─────────────────────────────────────────────────────────────────
   post-deployment-verification:
+    name: Post-Deployment Verification
     needs: deploy
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -308,14 +386,20 @@ jobs:
 
   # Job 9: Security Report
   security-report:
-    needs: [security-scan, sast-scanning, dependency-check, iac-scanning]
+    name: Security Report
+    needs:
+      - security-scan
+      - sast-scanning
+      - dependency-check
+      - iac-scanning
     runs-on: ubuntu-latest
     if: always()
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Generate security report
+      - name: Generate consolidated security report
         run: |
           echo "# Security Scan Report" > security-report.md
           echo "Generated: $(date)" >> security-report.md

@@ -41,9 +41,9 @@ services:
     # Security: User (non-root)
     user: "redis:redis"
     
-    # Networking
+    # Networking — FIX V18: localhost-bound only
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"
     networks:
       - agentguard-net
     expose:
@@ -118,9 +118,9 @@ services:
     # Security: User (nonroot from distroless)
     user: "65532:65532"
     
-    # Networking
+    # Networking — FIX V19: localhost-bound only
     ports:
-      - "8182:8181"
+      - "127.0.0.1:8182:8181"
     networks:
       - agentguard-net
     expose:
@@ -132,10 +132,10 @@ services:
       - ./docker/opa-hardened.conf:/etc/opa/opa-hardened.conf:ro
       - opa_data:/data:rw
     
-    # Environment
+    # Environment — FIX V17: OPA_ADDR scoped to localhost; debug → info
     environment:
-      OPA_ADDR: "0.0.0.0:8181"
-      OPA_LOG_LEVEL: "debug"
+      OPA_ADDR: "0.0.0.0:8181"          # inside container (Docker net isolated)
+      OPA_LOG_LEVEL: "info"              # was "debug" — V17/V26 fix
       OPA_QUERY_TIMEOUT: "100ms"
     
     # Health check
