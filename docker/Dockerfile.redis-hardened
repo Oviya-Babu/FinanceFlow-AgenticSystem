@@ -1,60 +1,75 @@
-# Hardened Redis Dockerfile for Security Mesh
+# ============================================================
+# Hardened Redis Dockerfile for AgentGuard Security Mesh
 # Base: Alpine Linux with security patches
-# Implements: Minimal footprint, security scanning, non-root execution
+# HARDENED 2026-05-27:
+#   V24 — fixed "apk cache clean" → "rm -rf /var/cache/apk/*"
+#          (apk cache clean is not a valid apk subcommand)
+# ============================================================
 
 ARG ALPINE_VERSION=3.19.1
+
+# ── Stage 1: Build Redis from verified source ─────────────────
 FROM alpine:${ALPINE_VERSION} AS builder
 
-# Install build dependencies with security scanning
+# FIX V24: use correct cache cleanup; apk cache clean is invalid
 RUN apk add --no-cache \
-    wget \
-    ca-certificates \
-    openssl \
-    && apk update \
-    && apk cache clean
+        wget \
+        ca-certificates \
+        openssl \
+        make \
+        gcc \
+        libc-dev \
+        linux-headers \
+    && rm -rf /var/cache/apk/*
 
-# Download and verify Redis
+# Download and verify Redis source
 ARG REDIS_VERSION=7.2.4
-ARG REDIS_SHA=48d0e4c56360ebcd88fa1038b3b10e80b83e4e9a71d21055c76833e77e5fb8f9
-RUN wget https://github.com/redis/redis/archive/${REDIS_VERSION}.tar.gz \
-    && echo "${REDIS_SHA}  ${REDIS_VERSION}.tar.gz" | sha256sum -c - \
-    && tar xzf ${REDIS_VERSION}.tar.gz \
-    && cd redis-${REDIS_VERSION} \
-    && make
+# SHA256 of redis-7.2.4.tar.gz (verify at https://download.redis.io/releases/)
+ARG REDIS_SHA256=8d104c26a154b29fd67d6568b4f9c74fe2498550a50603a3a5f9c7b4b0ff5bef
 
-# Final image: Minimal runtime
+RUN wget -q "https://download.redis.io/releases/redis-${REDIS_VERSION}.tar.gz" \
+    && echo "${REDIS_SHA256}  redis-${REDIS_VERSION}.tar.gz" | sha256sum -c - \
+    && tar xzf "redis-${REDIS_VERSION}.tar.gz" \
+    && cd "redis-${REDIS_VERSION}" \
+    && make -j"$(nproc)" \
+    && make install PREFIX=/usr/local \
+    && rm -rf "redis-${REDIS_VERSION}.tar.gz" "redis-${REDIS_VERSION}"
+
+# ── Stage 2: Minimal runtime image ────────────────────────────
 FROM alpine:${ALPINE_VERSION}
 
 # Install only runtime dependencies
+# FIX V24: proper cache cleanup
 RUN apk add --no-cache \
-    ca-certificates \
-    openssl \
-    && apk update \
-    && apk upgrade \
-    && apk cache clean
+        ca-certificates \
+        openssl \
+    && apk upgrade --no-cache \
+    && rm -rf /var/cache/apk/*
 
-# Copy Redis from builder
-COPY --from=builder /redis-${REDIS_VERSION}/src/redis-server /usr/local/bin/
-COPY --from=builder /redis-${REDIS_VERSION}/src/redis-cli /usr/local/bin/
+# Copy Redis binaries from builder
+COPY --from=builder /usr/local/bin/redis-server /usr/local/bin/redis-server
+COPY --from=builder /usr/local/bin/redis-cli    /usr/local/bin/redis-cli
 
 # Create non-root user for Redis
-RUN addgroup -S redis && adduser -S redis -G redis
+RUN addgroup -S -g 999 redis && adduser -S -u 999 -G redis redis
 
-# Create data directory with proper permissions
-RUN mkdir -p /data && chown -R redis:redis /data
+# Create data and log directories
+RUN mkdir -p /data /var/log/redis \
+    && chown -R redis:redis /data /var/log/redis
 
-# Set secure permissions
-RUN chmod 755 /usr/local/bin/redis-server && \
-    chmod 755 /usr/local/bin/redis-cli
+# Secure binary permissions
+RUN chmod 755 /usr/local/bin/redis-server \
+    && chmod 755 /usr/local/bin/redis-cli
 
 # Copy hardened Redis configuration
 COPY --chown=redis:redis redis-hardened.conf /etc/redis/
 
-# Copy users ACL file for Redis access control
+# Copy ACL file (users and permissions)
 COPY --chown=redis:redis users.acl /etc/redis/
 
-# Set secure permissions on config files
-RUN chmod 600 /etc/redis/redis-hardened.conf /etc/redis/users.acl
+# Lock down config file permissions
+RUN chmod 600 /etc/redis/redis-hardened.conf \
+    && chmod 600 /etc/redis/users.acl
 
 # Security labels
 LABEL security.vendor="AgentGuard" \
@@ -63,18 +78,22 @@ LABEL security.vendor="AgentGuard" \
       security.scanning="enabled" \
       audit.enabled="true"
 
-# Health check
+# Health check — authenticate with password from env if set
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
-    CMD redis-cli ping || exit 1
+    CMD redis-cli -a "${REDIS_PASSWORD:-}" ping || exit 1
 
 # Switch to non-root user
 USER redis:redis
 
-# Expose Redis port (only within container network)
+# Expose port (Docker network provides isolation; host binding via Compose)
 EXPOSE 6379
 
-# Run Redis with ACL and security hardening
+# Run Redis — the REDIS_PASSWORD env var is passed via --requirepass at runtime
+# so the conf file's placeholder is overridden
 ENTRYPOINT ["redis-server", "/etc/redis/redis-hardened.conf"]
 
-# Security: Read-only root filesystem
-# (Use --read-only flag when running container)
+# Security:
+# - Non-root user (redis:redis, UID/GID 999)
+# - Read-only root FS (use --read-only in Compose)
+# - Config and ACL files chmod 600
+# - All dangerous commands renamed/disabled in redis-hardened.conf

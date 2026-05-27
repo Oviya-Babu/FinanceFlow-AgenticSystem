@@ -99,15 +99,19 @@ async def init_redis() -> None:
     try:
         logger.info("Initializing Redis connection pool...")
 
+        # FIX V07/V20: include Redis password from env; never hard-code credentials
+        _redis_password = os.getenv("REDIS_PASSWORD") or None  # None = no auth
         app_state.redis = redis.Redis(
             host=os.getenv("REDIS_HOST", "localhost"),
             port=int(os.getenv("REDIS_PORT", 6379)),
             db=int(os.getenv("REDIS_DB", 0)),
+            password=_redis_password,
             max_connections=50,
             socket_timeout=0.2,
             socket_connect_timeout=0.5,
             retry_on_timeout=True,
             decode_responses=True,
+            ssl=os.getenv("REDIS_SSL", "false").lower() == "true",
         )
 
         # Test connection with ping (with timeout protection)
@@ -673,9 +677,12 @@ app = create_app()
 if __name__ == "__main__":
     import uvicorn
 
+    # FIX V20: default host is 127.0.0.1 (localhost only).
+    # Set HOST=0.0.0.0 explicitly only when running inside a container
+    # where the Docker network provides the isolation boundary.
     uvicorn.run(
         "main:app",
-        host=os.getenv("HOST", "0.0.0.0"),
+        host=os.getenv("HOST", "127.0.0.1"),
         port=int(os.getenv("PORT", 8000)),
         reload=os.getenv("ENV", "production") == "development",
         log_config=None,  # Use our logging configuration

@@ -68,8 +68,11 @@ class PrometheusConfig(BaseSettings):
     """Prometheus metrics configuration."""
     enabled: bool = True
     port: int = 9090
-    host: str = "0.0.0.0"
-    
+    # FIX: default to localhost — metrics endpoint must not be public.
+    # Override with PROMETHEUS_HOST=0.0.0.0 only inside Docker containers
+    # where the Docker network provides isolation.
+    host: str = "127.0.0.1"
+
     class Config:
         env_prefix = "PROMETHEUS_"
 
@@ -87,12 +90,17 @@ class LoggingConfig(BaseSettings):
 
 class FastAPIConfig(BaseSettings):
     """FastAPI server configuration."""
-    env: str = "development"
-    debug: bool = True
-    host: str = "0.0.0.0"
+    env: str = "production"
+    # FIX: debug=False — debug mode exposes interactive tracebacks, internal
+    # stack frames, and can leak secrets through error responses.
+    debug: bool = False
+    # FIX: default to localhost.  Set FASTAPI_HOST=0.0.0.0 only inside Docker.
+    host: str = "127.0.0.1"
     port: int = 8000
-    reload: bool = True
-    
+    # FIX: reload=False in production — auto-reload watches filesystem and
+    # can be abused to trigger code execution via file write primitives.
+    reload: bool = False
+
     class Config:
         env_prefix = "FASTAPI_"
 

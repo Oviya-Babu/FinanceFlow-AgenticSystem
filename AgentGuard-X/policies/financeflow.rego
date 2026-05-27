@@ -1,5 +1,8 @@
 package agentguard.authz
 
+# CRITICAL: Required for OPA < 1.0 — 'if' keyword is not built-in until OPA 1.0
+import future.keywords.if
+
 # ---------------------------------------------------------------------------
 # FinanceFlow agent/tool permission matrix (RBAC via OPA)
 #

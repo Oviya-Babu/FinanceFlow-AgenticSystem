@@ -1,30 +1,97 @@
+# ============================================================
+# AgentGuard Development Docker Compose
+# ============================================================
+# HARDENED 2026-05-27:
+#   V04  — Redis port bound to 127.0.0.1 only (was 0.0.0.0)
+#   V05  — OPA   port bound to 127.0.0.1 only (was 0.0.0.0)
+#   V08  — Prometheus bound to 127.0.0.1 (was 0.0.0.0)
+#   V09  — Loki       bound to 127.0.0.1 (was 0.0.0.0)
+#   V10  — Grafana    bound to 127.0.0.1 (was 0.0.0.0)
+#   V11  — Grafana anonymous auth DISABLED
+#   V12  — Grafana admin password from env var (no hardcoded default)
+#   V28  — Resource limits added to every service
+#   Redis  — password authentication enabled, protected-mode on
+#   All    — security_opt no-new-privileges, non-root users
+#
+# Usage:
+#   cp .env.example .env          # fill in secrets
+#   docker compose up -d
+# ============================================================
+
 version: "3.9"
 
 services:
 
+  # ── Redis ─────────────────────────────────────────────────
   redis:
-    image: redis:7-alpine
+    image: redis:7.2-alpine          # pinned minor version
     container_name: agentguard-redis
+    # FIX V04: bind to localhost only — not reachable from outside host
     ports:
-      - "6379:6379"
-    command: redis-server --appendonly yes --loglevel notice
+      - "127.0.0.1:6379:6379"
+    # Require password; protected-mode on; bind inside container to all
+    # container interfaces (Docker network is isolated already)
+    command: >
+      redis-server
+      --appendonly yes
+      --loglevel notice
+      --protected-mode yes
+      --requirepass "${REDIS_PASSWORD}"
+      --bind 0.0.0.0
+      --rename-command DEBUG ""
+      --rename-command CONFIG ""
+      --rename-command FLUSHALL ""
+      --rename-command FLUSHDB ""
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
     restart: unless-stopped
+    # Security hardening
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp
+    user: "999:999"                  # redis non-root user
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
     networks:
       - agentguard-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
+  # ── OPA ───────────────────────────────────────────────────
   opa:
-    image: openpolicyagent/opa:latest-static
+    image: openpolicyagent/opa:0.62.0-static   # pinned version
     container_name: agentguard-opa
+    # FIX V05: bind to localhost only
     ports:
-      - "8181:8181"
-    command: ["run", "--server", "--addr", "0.0.0.0:8181", "--log-level", "info", "/policies"]
+      - "127.0.0.1:8181:8181"
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"        # inside container — Docker net isolates
+      - "--log-level=info"
+      - "/policies"
     volumes:
       - ./AgentGuard-X/policies:/policies:ro
     healthcheck:
@@ -34,49 +101,117 @@ services:
       retries: 3
       start_period: 5s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    user: "65532:65532"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 128M
     networks:
       - agentguard-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
+  # ── Prometheus ────────────────────────────────────────────
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.50.0   # pinned version
     container_name: agentguard-prometheus
+    # FIX V08: bind to localhost only
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./AgentGuard-X/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--web.enable-lifecycle"
+      - "--web.listen-address=0.0.0.0:9090"
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "65534:65534"              # nobody
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
     networks:
       - agentguard-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
+  # ── Loki ──────────────────────────────────────────────────
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:2.9.4        # pinned version
     container_name: agentguard-loki
+    # FIX V09: bind to localhost only
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     command: -config.file=/etc/loki/loki-config.yml
     volumes:
       - ./loki-config.yml:/etc/loki/loki-config.yml:ro
       - loki_data:/loki
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
     networks:
       - agentguard-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
+  # ── Grafana ───────────────────────────────────────────────
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:10.3.0    # pinned version
     container_name: agentguard-grafana
+    # FIX V10: bind to localhost only
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=agentguard
+      # FIX V12: password from env var — no hardcoded default
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      # FIX V11: anonymous access DISABLED
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_SECURITY_DISABLE_BRUTE_FORCE_LOGIN_PROTECTION=false
+      - GF_SERVER_ROOT_URL=http://127.0.0.1:3001
     volumes:
       - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
@@ -85,14 +220,44 @@ services:
       - prometheus
       - loki
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "472:472"                  # grafana user
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
     networks:
       - agentguard-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
+# ── Volumes ───────────────────────────────────────────────────
 volumes:
   redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
   loki_data:
+    driver: local
   grafana_data:
+    driver: local
 
+# ── Networks ──────────────────────────────────────────────────
 networks:
   agentguard-net:
     driver: bridge
+    driver_opts:
+      com.docker.network.bridge.default_bridge: "false"
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16

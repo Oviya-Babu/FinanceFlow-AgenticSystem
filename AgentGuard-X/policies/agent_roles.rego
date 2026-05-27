@@ -1,6 +1,7 @@
 package agentguard.roles
 
-# CRITICAL: Required for OPA versions < 0.42.0 — 'in' operator fails without this import
+# CRITICAL: Required for OPA < 1.0 — 'if' and 'in' keywords are not built-in
+import future.keywords.if
 import future.keywords.in
 
 allowed_tools := {
