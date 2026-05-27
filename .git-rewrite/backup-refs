@@ -1,0 +1,9 @@
+26e63657f6ba437536fefffb51b21aebe6b47d9a commit	refs/heads/main
+2f27fc6af4dd57abbee314ccaf20455b65a33159 commit	refs/heads/temp
+af30a427539bda19f6b13fe415a4f679b0f5e88d commit	refs/heads/tempo
+20839155ea894937cdb451d139548f43d5cd207b commit	refs/heads/tempo1
+f45c466dd28bc6ad6bb211621f08d1c7f01b097b commit	refs/remotes/origin/HEAD
+f45c466dd28bc6ad6bb211621f08d1c7f01b097b commit	refs/remotes/origin/main
+be46a764e990c7e52d309c8598330b88986249d3 commit	refs/remotes/upstream/feat/agentguard-x-integration
+80d335c7d1810324c27e51996f5dfaa96dd4db67 commit	refs/remotes/upstream/main
+97506df1a81c97fdc96a4ee17016444bee3184f5 commit	refs/stash
