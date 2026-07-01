@@ -56,7 +56,7 @@ jobs:
       - name: Scan Redis with Trivy (JSON)
         id: trivy-redis
         # FIX V13: pin to specific version, not @master
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: 'image'
           image-ref: 'redis:7-alpine'
@@ -67,7 +67,7 @@ jobs:
 
       - name: Scan OPA with Trivy (JSON)
         id: trivy-opa
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: 'image'
           image-ref: 'openpolicyagent/opa:0.62.0-static'
@@ -78,7 +78,7 @@ jobs:
 
       # FIX V02: generate trivy-results.sarif BEFORE trying to upload it
       - name: Generate combined SARIF for Security tab
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
